@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 
 from agent.codex_stats_agent.config import AgentConfig
+from agent.codex_stats_agent.__main__ import main
 from agent.codex_stats_agent.models import QuotaSnapshot
 from agent.codex_stats_agent.quota import quota_from_log_payload, quota_from_usage_response
 from agent.codex_stats_agent.watcher import CodexWatcher
@@ -142,6 +143,45 @@ class WatcherTests(unittest.TestCase):
             serialized = json.dumps(finish, ensure_ascii=False)
             self.assertNotIn("секретный запрос", serialized)
             self.assertNotIn("access_token", serialized)
+
+
+class ConfigurationTests(unittest.TestCase):
+    def test_reconfigure_preserves_machine_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            first = main(
+                [
+                    "--config",
+                    str(path),
+                    "configure",
+                    "--server-url",
+                    "http://old",
+                    "--api-key",
+                    "old-key",
+                    "--user-name",
+                    "Иван",
+                ]
+            )
+            original = AgentConfig.load(path)
+            second = main(
+                [
+                    "--config",
+                    str(path),
+                    "configure",
+                    "--server-url",
+                    "http://new",
+                    "--api-key",
+                    "new-key",
+                    "--user-name",
+                    "Пётр",
+                ]
+            )
+            updated = AgentConfig.load(path)
+            self.assertEqual((first, second), (0, 0))
+            self.assertEqual(updated.machine_id, original.machine_id)
+            self.assertEqual(updated.machine_name, original.machine_name)
+            self.assertEqual(updated.server_url, "http://new")
+            self.assertEqual(updated.user_name, "Пётр")
 
 
 if __name__ == "__main__":

@@ -25,6 +25,15 @@ $launcher = Join-Path $startupDirectory "CodexStatsAgent.vbs"
 
 New-Item -ItemType Directory -Force -Path $installDirectory, $configDirectory | Out-Null
 
+# Остановить предыдущую копию перед заменой exe. Дочерний процесс PyInstaller
+# также использует тот же ExecutablePath и будет завершён.
+if (Test-Path -LiteralPath $target) {
+    Get-CimInstance Win32_Process -Filter "Name = 'codex-stats-agent.exe'" |
+        Where-Object { $_.ExecutablePath -eq $target } |
+        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    Start-Sleep -Milliseconds 500
+}
+
 if ($ExecutablePath) {
     Copy-Item -LiteralPath $ExecutablePath -Destination $target -Force
 } else {

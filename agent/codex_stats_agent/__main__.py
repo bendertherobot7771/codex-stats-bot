@@ -38,6 +38,15 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "configure":
         config = create_config(args.server_url, args.api_key, args.user_name, codex_home=args.codex_home)
+        try:
+            existing = AgentConfig.load(args.config)
+        except (FileNotFoundError, TypeError, ValueError, OSError):
+            existing = None
+        if existing:
+            config.machine_id = existing.machine_id
+            config.machine_name = existing.machine_name
+            if not args.codex_home:
+                config.codex_home = existing.codex_home
         config.save(args.config)
         print(f"Конфигурация сохранена: {args.config}")
         print(f"ПК: {config.machine_name} ({config.machine_id})")
@@ -74,4 +83,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
