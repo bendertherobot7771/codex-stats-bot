@@ -33,7 +33,7 @@ def _handler_factory(
     completion_notifier: Callable[[str], None] | None,
 ) -> type[BaseHTTPRequestHandler]:
     class Handler(BaseHTTPRequestHandler):
-        server_version = "CodexStats/0.2.0"
+        server_version = "CodexStats/0.2.1"
 
         def do_GET(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)

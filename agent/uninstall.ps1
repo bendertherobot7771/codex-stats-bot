@@ -1,4 +1,4 @@
-$ErrorActionPreference = "Stop"
+﻿$ErrorActionPreference = "Stop"
 $installDirectory = Join-Path $env:LOCALAPPDATA "CodexStatsAgent"
 $configDirectory = Join-Path $env:APPDATA "CodexStatsAgent"
 $launcher = Join-Path ([Environment]::GetFolderPath("Startup")) "CodexStatsAgent.vbs"

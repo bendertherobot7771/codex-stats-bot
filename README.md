@@ -4,7 +4,7 @@ Codex Stats Bot собирает статистику использования
 
 Первый рабочий MVP включает Windows-агент, HTTP-сервер, SQLite и Telegram-бота.
 
-Текущая версия: `0.2.0`.
+Текущая версия: `0.2.1`.
 
 ## Цели
 
@@ -159,8 +159,8 @@ stats.example.com {
 После успешного CI создайте и отправьте тег:
 
 ```powershell
-git tag v0.2.0
-git push origin v0.2.0
+git tag v0.2.1
+git push origin v0.2.1
 ```
 
 Workflow проверит проект, соберёт Windows x64 `.exe` и приложит его к GitHub Release. Установщик `agent/install.ps1` по умолчанию скачивает именно этот release asset.
