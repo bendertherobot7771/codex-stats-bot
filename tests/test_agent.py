@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import io
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 
 from agent.codex_stats_agent.config import AgentConfig
@@ -149,33 +151,35 @@ class ConfigurationTests(unittest.TestCase):
     def test_reconfigure_preserves_machine_identity(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.json"
-            first = main(
-                [
-                    "--config",
-                    str(path),
-                    "configure",
-                    "--server-url",
-                    "http://old",
-                    "--api-key",
-                    "old-key",
-                    "--user-name",
-                    "Иван",
-                ]
-            )
+            with redirect_stdout(io.StringIO()):
+                first = main(
+                    [
+                        "--config",
+                        str(path),
+                        "configure",
+                        "--server-url",
+                        "http://old",
+                        "--api-key",
+                        "old-key",
+                        "--user-name",
+                        "Иван",
+                    ]
+                )
             original = AgentConfig.load(path)
-            second = main(
-                [
-                    "--config",
-                    str(path),
-                    "configure",
-                    "--server-url",
-                    "http://new",
-                    "--api-key",
-                    "new-key",
-                    "--user-name",
-                    "Пётр",
-                ]
-            )
+            with redirect_stdout(io.StringIO()):
+                second = main(
+                    [
+                        "--config",
+                        str(path),
+                        "configure",
+                        "--server-url",
+                        "http://new",
+                        "--api-key",
+                        "new-key",
+                        "--user-name",
+                        "Пётр",
+                    ]
+                )
             updated = AgentConfig.load(path)
             self.assertEqual((first, second), (0, 0))
             self.assertEqual(updated.machine_id, original.machine_id)
