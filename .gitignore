@@ -1,0 +1,36 @@
+# Local agent instructions
+AGENTS.md
+
+# Secrets and runtime configuration
+.env
+*.local.json
+config.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Build output
+build/
+dist/
+*.spec
+
+# Runtime data
+data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.log
+
+# Editors and OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Scratch files
+work/
+
