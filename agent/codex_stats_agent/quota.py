@@ -39,7 +39,7 @@ def fetch_weekly_quota(codex_home: Path, timeout: float = 10.0) -> QuotaSnapshot
     request = urllib.request.Request(DEFAULT_USAGE_URL)
     request.add_header("Authorization", f"Bearer {access_token}")
     request.add_header("Accept", "application/json")
-    request.add_header("User-Agent", "codex-stats-agent/0.1")
+    request.add_header("User-Agent", "codex-stats-agent/0.1.1")
     if account_id:
         request.add_header("ChatGPT-Account-Id", str(account_id))
 
@@ -178,4 +178,3 @@ def _timestamp(value: Any, fallback: float) -> float:
         except ValueError:
             pass
     return fallback
-
