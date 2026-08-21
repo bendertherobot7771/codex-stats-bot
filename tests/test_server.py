@@ -7,7 +7,7 @@ from pathlib import Path
 
 from server.codex_stats_server.allocation import allocate_weekly_percent
 from server.codex_stats_server.database import StatsDatabase
-from server.codex_stats_server.reports import stats_payload, weekly_windows
+from server.codex_stats_server.reports import stats_payload, telegram_weeks, weekly_windows
 
 
 def event(
@@ -126,6 +126,9 @@ class DatabaseTests(unittest.TestCase):
                 windows = weekly_windows(database)
                 self.assertEqual([item["reset_at"] for item in windows], [2_000, 1_000])
                 self.assertEqual(windows[0]["rows"][0]["machine_name"], "PC-1")
+                text, markup = telegram_weeks(database, page=1, page_size=1)
+                self.assertIn("страница 1/2", text)
+                self.assertEqual(markup["inline_keyboard"][-1][0]["callback_data"], "weeks:2")
             finally:
                 database.close()
 

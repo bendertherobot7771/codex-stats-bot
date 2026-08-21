@@ -38,19 +38,33 @@ def weekly_windows(database: StatsDatabase) -> list[dict[str, Any]]:
     return windows
 
 
-def telegram_weeks(database: StatsDatabase) -> tuple[str, dict[str, Any] | None]:
+def telegram_weeks(
+    database: StatsDatabase, page: int = 1, page_size: int = 8
+) -> tuple[str, dict[str, Any] | None]:
     windows = weekly_windows(database)
     if not windows:
         return "Недельной статистики пока нет.", None
-    lines = ["Недельные окна Codex:"]
+    page_count = max(1, (len(windows) + page_size - 1) // page_size)
+    page = max(1, min(page, page_count))
+    offset = (page - 1) * page_size
+    visible = windows[offset : offset + page_size]
+    lines = [f"Недельные окна Codex · страница {page}/{page_count}:"]
     buttons = []
-    for index, window in enumerate(windows[:20], 1):
+    for index, window in enumerate(visible, offset + 1):
         lines.append(
             f"{index}. {window['label']} · {window['observed_weekly_percent']:.2f}% · "
             f"{window['tasks']} задач"
         )
         buttons.append({"text": str(index), "callback_data": f"week:{index}"})
-    keyboard = {"inline_keyboard": [buttons[i : i + 5] for i in range(0, len(buttons), 5)]}
+    keyboard_rows = [buttons[i : i + 4] for i in range(0, len(buttons), 4)]
+    navigation = []
+    if page > 1:
+        navigation.append({"text": "←", "callback_data": f"weeks:{page - 1}"})
+    if page < page_count:
+        navigation.append({"text": "→", "callback_data": f"weeks:{page + 1}"})
+    if navigation:
+        keyboard_rows.append(navigation)
+    keyboard = {"inline_keyboard": keyboard_rows}
     return "\n".join(lines), keyboard
 
 

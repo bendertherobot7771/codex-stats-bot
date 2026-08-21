@@ -45,6 +45,10 @@ class TelegramBot:
 
     def _run(self) -> None:
         offset = int(self.database.get_setting("telegram_offset", "0") or 0)
+        try:
+            self._request("setMyCommands", {"commands": _telegram_commands()})
+        except Exception as error:
+            LOGGER.warning("Не удалось обновить меню команд Telegram: %s", error)
         while self.running:
             self._flush_outgoing()
             try:
@@ -90,7 +94,7 @@ class TelegramBot:
         elif command == "/stats":
             response, markup = telegram_week(self.database), None
         elif command == "/weeks":
-            response, markup = telegram_weeks(self.database)
+            response, markup = telegram_weeks(self.database, _integer_argument(text, 1))
         elif command == "/week":
             response, markup = telegram_week(self.database, _integer_argument(text, 1)), None
         elif command == "/active":
@@ -119,7 +123,12 @@ class TelegramBot:
             return
         if data.startswith("week:"):
             index = _safe_int(data.removeprefix("week:"), 1)
-            self._edit_or_send(message, chat_id, telegram_week(self.database, index))
+            markup = {"inline_keyboard": [[{"text": "← К списку", "callback_data": "weeks:1"}]]}
+            self._edit_or_send(message, chat_id, telegram_week(self.database, index), markup)
+        elif data.startswith("weeks:"):
+            page = _safe_int(data.removeprefix("weeks:"), 1)
+            text, markup = telegram_weeks(self.database, page)
+            self._edit_or_send(message, chat_id, text, markup)
         elif data.startswith("remove:") and user["role"] == "admin":
             target = _safe_int(data.removeprefix("remove:"), 0)
             result = self.database.disable_bot_user(target)
@@ -232,6 +241,18 @@ def _help(role: str) -> str:
             ]
         )
     return "\n".join(lines)
+
+
+def _telegram_commands() -> list[dict[str, str]]:
+    return [
+        {"command": "stats", "description": "текущая неделя по компьютерам"},
+        {"command": "weeks", "description": "вся недельная история"},
+        {"command": "active", "description": "активные задания"},
+        {"command": "last", "description": "последние задания"},
+        {"command": "users", "description": "управление участниками (админ)"},
+        {"command": "whoami", "description": "показать Telegram chat ID"},
+        {"command": "help", "description": "справка"},
+    ]
 
 
 def _integer_argument(text: str, default: int) -> int:
