@@ -1,0 +1,23 @@
+[Unit]
+Description=Codex Stats Server and Telegram Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=codexstats
+Group=codexstats
+WorkingDirectory=/opt/codex-stats-bot
+EnvironmentFile=/etc/codex-stats-bot.env
+ExecStart=/usr/bin/python3 -m server.codex_stats_server
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/codex-stats-bot
+
+[Install]
+WantedBy=multi-user.target
+

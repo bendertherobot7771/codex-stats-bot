@@ -2,7 +2,7 @@
 
 Codex Stats Bot собирает статистику использования Codex с нескольких Windows-компьютеров и показывает сводку через Telegram-бота, запущенного на Orange Pi или другом Linux-сервере.
 
-Проект находится на стадии первого MVP. Windows-агент уже реализован; серверная часть добавляется следующим этапом.
+Первый рабочий MVP включает Windows-агент, HTTP-сервер, SQLite и Telegram-бота.
 
 ## Цели
 
@@ -18,7 +18,7 @@ Codex Stats Bot собирает статистику использования
 Проект состоит из двух частей:
 
 1. Windows-агент следит за локальными JSONL-журналами Codex, распознаёт события `task_started`, `token_count` и `task_complete`, получает снимки недельного окна и отправляет обезличенную статистику серверу.
-2. Сервер на Orange Pi принимает события, сохраняет их в SQLite, рассчитывает распределение недельного расхода и отвечает на команды Telegram-бота.
+2. Сервер на Orange Pi принимает идемпотентные события по HTTP, сохраняет их в SQLite, рассчитывает распределение недельного расхода и отвечает на команды Telegram-бота.
 
 OAuth-токен Codex используется только локальным агентом для запроса текущего лимита и никогда не отправляется на сервер. Тексты запросов, ответы модели и результаты инструментов не собираются.
 
@@ -66,7 +66,50 @@ powershell -ExecutionPolicy Bypass -File .\agent\uninstall.ps1
 ## Состояние установки
 
 - Windows: исходный агент и установочные скрипты готовы; сборка одного `.exe` будет выполняться GitHub Actions.
-- Orange Pi: Python 3, SQLite и systemd; серверная часть не требует Docker.
+- Orange Pi: сервер использует только стандартную библиотеку Python 3, SQLite и systemd; `pip`, Docker и отдельная СУБД не нужны.
+
+## Сервер на Orange Pi
+
+Скопируйте или клонируйте репозиторий на Orange Pi и выполните из его корня:
+
+```bash
+sudo bash server/install.sh
+sudo nano /etc/codex-stats-bot.env
+sudo systemctl enable --now codex-stats-bot
+systemctl status codex-stats-bot
+```
+
+Обязательная настройка:
+
+```dotenv
+CODEX_STATS_API_KEY=длинный-случайный-секрет
+```
+
+Этот же секрет вводится в установщик каждого Windows-агента. Для создания секрета можно использовать:
+
+```bash
+python3 -c 'import secrets; print(secrets.token_urlsafe(32))'
+```
+
+Для Telegram создайте бота через `@BotFather`, задайте `TELEGRAM_BOT_TOKEN`, запустите сервис и отправьте боту `/whoami`. Полученный ID внесите в `TELEGRAM_ALLOWED_CHAT_IDS`, после чего перезапустите сервис и отправьте `/start`.
+
+Команды бота:
+
+- `/stats` — сводка по пользователям и ПК за семь дней;
+- `/active` — текущие задания;
+- `/last` — последние завершённые задания;
+- `/whoami` — Telegram chat ID для настройки доступа;
+- `/help` — справка.
+
+HTTP API:
+
+- `GET /health` — проверка доступности без авторизации;
+- `POST /api/v1/events` — события Windows-агентов;
+- `GET /api/v1/stats?days=7` — JSON-сводка.
+
+Кроме `/health`, запросы требуют заголовок `Authorization: Bearer <CODEX_STATS_API_KEY>`. Повторная отправка одного `event_id` безопасна и не создаёт дубликат.
+
+По умолчанию сервер слушает все сетевые интерфейсы на порту `8765`. В доверенной домашней сети этого достаточно для MVP. Для доступа через интернет используйте Tailscale, WireGuard или HTTPS reverse proxy: обычный HTTP не шифрует серверный API-ключ.
 - Сборка Windows `.exe`: автоматически через GitHub Actions.
 
 ## Ограничения Windows-агента
@@ -85,3 +128,11 @@ py -m unittest discover -s tests -v
 ```
 
 Ручная проверка текущей авторизации выполняется отдельно командой `status`.
+
+Проверка HTTP-сервера после запуска:
+
+```bash
+curl http://127.0.0.1:8765/health
+curl -H "Authorization: Bearer $CODEX_STATS_API_KEY" \
+  "http://127.0.0.1:8765/api/v1/stats?days=7"
+```
