@@ -57,6 +57,20 @@ powershell -ExecutionPolicy Bypass -File .\agent\install.ps1 `
 
 Установка не требует прав администратора: один `.exe` помещается в `%LOCALAPPDATA%\CodexStatsAgent`, а скрытый запуск при входе создаётся в пользовательской папке автозагрузки. Удаление:
 
+Если репозиторий приватный, установщик автоматически использует сохранённую авторизацию Git Credential Manager. На компьютере без настроенного Git можно временно задать `GITHUB_TOKEN` с правом чтения репозитория либо предварительно скачать exe и выполнить:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\agent\install.ps1 `
+  -ServerUrl "http://orange-pi:8765" `
+  -ApiKey "ЗАМЕНИТЕ_НА_ОБЩИЙ_СЕКРЕТ" `
+  -UserName "Имя пользователя" `
+  -ExecutablePath "C:\Downloads\codex-stats-agent.exe"
+```
+
+GitHub-токен используется только во время скачивания и не записывается в конфигурацию агента.
+
+Удаление:
+
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\agent\uninstall.ps1
 ```
