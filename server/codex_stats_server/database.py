@@ -59,6 +59,15 @@ CREATE TABLE IF NOT EXISTS bot_chats (
     registered_at REAL NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS bot_users (
+    chat_id INTEGER PRIMARY KEY,
+    role TEXT NOT NULL CHECK(role IN ('admin', 'viewer')),
+    display_name TEXT,
+    added_by INTEGER,
+    added_at REAL NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1
+);
+
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -127,6 +136,53 @@ class StatsDatabase:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def completed_tasks(self) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT * FROM tasks WHERE status='completed' ORDER BY finished_at DESC"
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def ensure_bot_user(
+        self, chat_id: int, role: str, display_name: str | None = None, added_by: int | None = None
+    ) -> None:
+        if role not in {"admin", "viewer"}:
+            raise ValueError("Неизвестная роль Telegram")
+        with self._lock, self._connection:
+            self._connection.execute(
+                """
+                INSERT INTO bot_users(chat_id,role,display_name,added_by,added_at,enabled)
+                VALUES(?,?,?,?,?,1)
+                ON CONFLICT(chat_id) DO UPDATE SET
+                    role=CASE WHEN bot_users.role='admin' THEN 'admin' ELSE excluded.role END,
+                    display_name=COALESCE(excluded.display_name,bot_users.display_name),enabled=1
+                """,
+                (chat_id, role, display_name, added_by, time.time()),
+            )
+
+    def bot_user(self, chat_id: int) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM bot_users WHERE chat_id=? AND enabled=1", (chat_id,)
+            ).fetchone()
+        return dict(row) if row else None
+
+    def bot_users(self) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT * FROM bot_users WHERE enabled=1 ORDER BY role,chat_id"
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def disable_bot_user(self, chat_id: int) -> bool:
+        with self._lock, self._connection:
+            return bool(
+                self._connection.execute(
+                    "UPDATE bot_users SET enabled=0 WHERE chat_id=? AND role!='admin' AND enabled=1",
+                    (chat_id,),
+                ).rowcount
+            )
+
     def register_chat(self, chat_id: int) -> None:
         with self._lock, self._connection:
             self._connection.execute(
@@ -137,6 +193,17 @@ class StatsDatabase:
     def registered_chats(self) -> list[int]:
         with self._lock:
             rows = self._connection.execute("SELECT chat_id FROM bot_chats ORDER BY chat_id").fetchall()
+        return [int(row[0]) for row in rows]
+
+    def notification_chats(self) -> list[int]:
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT c.chat_id FROM bot_chats c
+                JOIN bot_users u ON u.chat_id=c.chat_id
+                WHERE u.enabled=1 ORDER BY c.chat_id
+                """
+            ).fetchall()
         return [int(row[0]) for row in rows]
 
     def get_setting(self, key: str, default: str = "") -> str:
@@ -286,4 +353,3 @@ def _optional_integer(value: Any) -> int | None:
         return int(value) if value is not None else None
     except (TypeError, ValueError):
         return None
-

@@ -12,7 +12,8 @@ class ServerConfig:
     database_path: Path
     agent_api_key: str
     telegram_bot_token: str | None
-    telegram_allowed_chat_ids: set[int]
+    telegram_admin_chat_ids: set[int]
+    telegram_initial_viewer_chat_ids: set[int]
     notify_completions: bool
 
     @classmethod
@@ -26,7 +27,12 @@ class ServerConfig:
             database_path=Path(os.environ.get("CODEX_STATS_DB", "data/codex-stats.sqlite")),
             agent_api_key=api_key,
             telegram_bot_token=os.environ.get("TELEGRAM_BOT_TOKEN") or None,
-            telegram_allowed_chat_ids=_chat_ids(os.environ.get("TELEGRAM_ALLOWED_CHAT_IDS", "")),
+            telegram_admin_chat_ids=_chat_ids(
+                os.environ.get("TELEGRAM_ADMIN_CHAT_IDS", "8461749755")
+            ),
+            telegram_initial_viewer_chat_ids=_chat_ids(
+                os.environ.get("TELEGRAM_ALLOWED_CHAT_IDS", "")
+            ),
             notify_completions=_boolean(os.environ.get("TELEGRAM_NOTIFY_COMPLETIONS", "true")),
         )
 
@@ -42,4 +48,3 @@ def _chat_ids(value: str) -> set[int]:
 
 def _boolean(value: str) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
-

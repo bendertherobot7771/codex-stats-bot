@@ -7,7 +7,7 @@ from pathlib import Path
 
 from server.codex_stats_server.allocation import allocate_weekly_percent
 from server.codex_stats_server.database import StatsDatabase
-from server.codex_stats_server.reports import stats_payload
+from server.codex_stats_server.reports import stats_payload, weekly_windows
 
 
 def event(
@@ -98,6 +98,34 @@ class DatabaseTests(unittest.TestCase):
                 self.assertEqual(len(payload["rows"]), 1)
                 self.assertEqual(payload["rows"][0]["total_tokens"], 123_456)
                 self.assertEqual(payload["rows"][0]["weekly_percent"], 3)
+            finally:
+                database.close()
+
+    def test_bot_users_and_weekly_history_are_persistent(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = StatsDatabase(Path(directory) / "test.sqlite")
+            try:
+                database.ensure_bot_user(8461749755, "admin", "Владелец")
+                database.ensure_bot_user(123, "viewer", "Иван", 8461749755)
+                self.assertEqual(database.bot_user(8461749755)["role"], "admin")
+                self.assertEqual(database.bot_user(123)["display_name"], "Иван")
+                self.assertTrue(database.disable_bot_user(123))
+                self.assertIsNone(database.bot_user(123))
+                self.assertFalse(database.disable_bot_user(8461749755))
+
+                now = time.time()
+                for task_id, reset in (("old", 1_000), ("new", 2_000)):
+                    start = event("task_started", task_id, user="Иван", machine="PC-1", started=now - 100)
+                    finish = event("task_completed", task_id, user="Иван", machine="PC-1", started=now - 100, finished=now, used=12, tokens=100)
+                    start["start_quota"]["resets_at"] = reset
+                    start["quota"]["resets_at"] = reset
+                    finish["start_quota"]["resets_at"] = reset
+                    finish["quota"]["resets_at"] = reset
+                    database.apply_event(start)
+                    database.apply_event(finish)
+                windows = weekly_windows(database)
+                self.assertEqual([item["reset_at"] for item in windows], [2_000, 1_000])
+                self.assertEqual(windows[0]["rows"][0]["machine_name"], "PC-1")
             finally:
                 database.close()
 

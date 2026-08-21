@@ -20,7 +20,12 @@ def main() -> int:
     database = StatsDatabase(config.database_path)
     bot = None
     if config.telegram_bot_token:
-        bot = TelegramBot(config.telegram_bot_token, config.telegram_allowed_chat_ids, database)
+        bot = TelegramBot(
+            config.telegram_bot_token,
+            config.telegram_admin_chat_ids,
+            config.telegram_initial_viewer_chat_ids,
+            database,
+        )
         bot.start()
 
     notifier = bot.notify_registered if bot and config.notify_completions else None

@@ -5,23 +5,31 @@ import logging
 import queue
 import threading
 import urllib.error
-import urllib.parse
 import urllib.request
 from typing import Any
 
 from .database import StatsDatabase
-from .reports import telegram_active, telegram_last, telegram_stats
+from .reports import telegram_active, telegram_last, telegram_week, telegram_weeks
 
 
 LOGGER = logging.getLogger("codex_stats_telegram")
 
 
 class TelegramBot:
-    def __init__(self, token: str, allowed_chat_ids: set[int], database: StatsDatabase):
+    def __init__(
+        self,
+        token: str,
+        admin_chat_ids: set[int],
+        initial_viewer_chat_ids: set[int],
+        database: StatsDatabase,
+    ):
         self.base_url = f"https://api.telegram.org/bot{token}"
-        self.allowed_chat_ids = allowed_chat_ids
         self.database = database
-        self.outgoing: queue.Queue[tuple[int, str]] = queue.Queue()
+        for chat_id in admin_chat_ids:
+            database.ensure_bot_user(chat_id, "admin", "Администратор")
+        for chat_id in initial_viewer_chat_ids - admin_chat_ids:
+            database.ensure_bot_user(chat_id, "viewer")
+        self.outgoing: queue.Queue[tuple[str, dict[str, Any]]] = queue.Queue()
         self.running = True
         self.thread = threading.Thread(target=self._run, name="telegram-bot", daemon=True)
 
@@ -32,16 +40,22 @@ class TelegramBot:
         self.running = False
 
     def notify_registered(self, text: str) -> None:
-        for chat_id in self.database.registered_chats():
-            if chat_id in self.allowed_chat_ids:
-                self.outgoing.put((chat_id, text))
+        for chat_id in self.database.notification_chats():
+            self._send(chat_id, text)
 
     def _run(self) -> None:
         offset = int(self.database.get_setting("telegram_offset", "0") or 0)
         while self.running:
             self._flush_outgoing()
             try:
-                updates = self._request("getUpdates", {"offset": offset, "timeout": 20, "allowed_updates": ["message"]})
+                updates = self._request(
+                    "getUpdates",
+                    {
+                        "offset": offset,
+                        "timeout": 20,
+                        "allowed_updates": ["message", "callback_query"],
+                    },
+                )
                 for update in updates.get("result", []):
                     offset = max(offset, int(update["update_id"]) + 1)
                     self.database.set_setting("telegram_offset", str(offset))
@@ -51,6 +65,10 @@ class TelegramBot:
                 threading.Event().wait(3)
 
     def _handle_update(self, update: dict[str, Any]) -> None:
+        callback = update.get("callback_query")
+        if isinstance(callback, dict):
+            self._handle_callback(callback)
+            return
         message = update.get("message") if isinstance(update.get("message"), dict) else {}
         chat = message.get("chat") if isinstance(message.get("chat"), dict) else {}
         chat_id = int(chat.get("id", 0))
@@ -59,34 +77,124 @@ class TelegramBot:
         if not chat_id:
             return
         if command == "/whoami":
-            self.outgoing.put((chat_id, f"Telegram chat ID: {chat_id}"))
+            self._send(chat_id, f"Telegram chat ID: {chat_id}")
             return
-        if chat_id not in self.allowed_chat_ids:
-            self.outgoing.put((chat_id, f"Доступ запрещён. Ваш chat ID: {chat_id}"))
+        user = self.database.bot_user(chat_id)
+        if not user:
+            self._send(chat_id, f"Доступ запрещён. Ваш chat ID: {chat_id}")
             return
+
         if command == "/start":
             self.database.register_chat(chat_id)
-            response = "Уведомления Codex Stats включены.\n" + _help()
+            response, markup = "Уведомления Codex Stats включены.\n" + _help(user["role"]), None
         elif command == "/stats":
-            response = telegram_stats(self.database)
+            response, markup = telegram_week(self.database), None
+        elif command == "/weeks":
+            response, markup = telegram_weeks(self.database)
+        elif command == "/week":
+            response, markup = telegram_week(self.database, _integer_argument(text, 1)), None
         elif command == "/active":
-            response = telegram_active(self.database)
+            response, markup = telegram_active(self.database), None
         elif command == "/last":
-            response = telegram_last(self.database)
+            response, markup = telegram_last(self.database), None
+        elif command == "/users" and user["role"] == "admin":
+            response, markup = self._users_message()
+        elif command == "/adduser" and user["role"] == "admin":
+            response, markup = self._add_user(chat_id, text), None
+        elif command == "/removeuser" and user["role"] == "admin":
+            response, markup = self._remove_user(text), None
         else:
-            response = _help()
-        self.outgoing.put((chat_id, response))
+            response, markup = _help(user["role"]), None
+        self._send(chat_id, response, markup)
+
+    def _handle_callback(self, callback: dict[str, Any]) -> None:
+        callback_id = str(callback.get("id") or "")
+        message = callback.get("message") if isinstance(callback.get("message"), dict) else {}
+        chat = message.get("chat") if isinstance(message.get("chat"), dict) else {}
+        chat_id = int(chat.get("id", 0))
+        data = str(callback.get("data") or "")
+        user = self.database.bot_user(chat_id)
+        if not user:
+            self.outgoing.put(("answerCallbackQuery", {"callback_query_id": callback_id, "text": "Нет доступа"}))
+            return
+        if data.startswith("week:"):
+            index = _safe_int(data.removeprefix("week:"), 1)
+            self._edit_or_send(message, chat_id, telegram_week(self.database, index))
+        elif data.startswith("remove:") and user["role"] == "admin":
+            target = _safe_int(data.removeprefix("remove:"), 0)
+            result = self.database.disable_bot_user(target)
+            text, markup = self._users_message()
+            prefix = "Участник удалён.\n" if result else "Удалить администратора нельзя.\n"
+            self._edit_or_send(message, chat_id, prefix + text, markup)
+        self.outgoing.put(("answerCallbackQuery", {"callback_query_id": callback_id}))
+
+    def _add_user(self, admin_id: int, text: str) -> str:
+        parts = text.split(maxsplit=2)
+        if len(parts) < 2 or not parts[1].lstrip("-").isdigit():
+            return "Формат: /adduser CHAT_ID [имя]"
+        chat_id = int(parts[1])
+        name = parts[2].strip()[:200] if len(parts) > 2 else None
+        self.database.ensure_bot_user(chat_id, "viewer", name, admin_id)
+        return f"Участник {chat_id} добавлен. Теперь он может открыть /stats и /weeks."
+
+    def _remove_user(self, text: str) -> str:
+        parts = text.split(maxsplit=1)
+        if len(parts) < 2 or not parts[1].lstrip("-").isdigit():
+            return "Формат: /removeuser CHAT_ID"
+        if self.database.disable_bot_user(int(parts[1])):
+            return "Участник удалён."
+        return "Участник не найден или является администратором."
+
+    def _users_message(self) -> tuple[str, dict[str, Any] | None]:
+        users = self.database.bot_users()
+        lines = ["Доступ к боту:"]
+        buttons = []
+        for user in users:
+            name = f" · {user['display_name']}" if user.get("display_name") else ""
+            lines.append(f"• {user['chat_id']} · {user['role']}{name}")
+            if user["role"] != "admin":
+                buttons.append(
+                    [
+                        {
+                            "text": f"Удалить {user['chat_id']}",
+                            "callback_data": f"remove:{user['chat_id']}",
+                        }
+                    ]
+                )
+        return "\n".join(lines), ({"inline_keyboard": buttons} if buttons else None)
+
+    def _edit_or_send(
+        self,
+        message: dict[str, Any],
+        chat_id: int,
+        text: str,
+        markup: dict[str, Any] | None = None,
+    ) -> None:
+        message_id = message.get("message_id")
+        if message_id:
+            payload: dict[str, Any] = {"chat_id": chat_id, "message_id": message_id, "text": text}
+            if markup:
+                payload["reply_markup"] = markup
+            self.outgoing.put(("editMessageText", payload))
+        else:
+            self._send(chat_id, text, markup)
+
+    def _send(self, chat_id: int, text: str, markup: dict[str, Any] | None = None) -> None:
+        payload: dict[str, Any] = {"chat_id": chat_id, "text": text}
+        if markup:
+            payload["reply_markup"] = markup
+        self.outgoing.put(("sendMessage", payload))
 
     def _flush_outgoing(self) -> None:
         while True:
             try:
-                chat_id, text = self.outgoing.get_nowait()
+                method, payload = self.outgoing.get_nowait()
             except queue.Empty:
                 return
             try:
-                self._request("sendMessage", {"chat_id": chat_id, "text": text})
+                self._request(method, payload)
             except Exception as error:
-                LOGGER.warning("Не удалось отправить сообщение Telegram: %s", error)
+                LOGGER.warning("Не удалось выполнить запрос Telegram: %s", error)
 
     def _request(self, method: str, payload: dict[str, Any]) -> dict[str, Any]:
         request = urllib.request.Request(
@@ -105,13 +213,34 @@ class TelegramBot:
         return result
 
 
-def _help() -> str:
-    return (
-        "Команды:\n"
-        "/stats — статистика за 7 дней\n"
-        "/active — активные задания\n"
-        "/last — последние задания\n"
-        "/whoami — показать Telegram chat ID\n"
-        "/help — эта справка"
-    )
+def _help(role: str) -> str:
+    lines = [
+        "Команды:",
+        "/stats — текущая неделя по компьютерам",
+        "/weeks — вся недельная история",
+        "/week N — выбранная неделя",
+        "/active — активные задания",
+        "/last — последние задания",
+        "/whoami — показать Telegram chat ID",
+    ]
+    if role == "admin":
+        lines.extend(
+            [
+                "/users — участники и кнопки удаления",
+                "/adduser CHAT_ID [имя] — дать доступ",
+                "/removeuser CHAT_ID — отозвать доступ",
+            ]
+        )
+    return "\n".join(lines)
 
+
+def _integer_argument(text: str, default: int) -> int:
+    parts = text.split(maxsplit=1)
+    return _safe_int(parts[1], default) if len(parts) > 1 else default
+
+
+def _safe_int(value: str, default: int) -> int:
+    try:
+        return int(value)
+    except ValueError:
+        return default
