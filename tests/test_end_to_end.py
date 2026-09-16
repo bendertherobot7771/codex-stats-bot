@@ -34,8 +34,10 @@ class EndToEndTests(unittest.TestCase):
                         "task_id": task,
                         "started_at": start,
                         "finished_at": end,
-                        "start_quota": {"used_percent": 40, "resets_at": 999, "source": "test"},
-                        "quota": {"used_percent": used, "resets_at": 999, "source": "test"},
+                        "start_quota": {"used_percent": 40 if machine == "PC-A" else 41, "resets_at": 999,
+                                        "source": "oauth_usage_endpoint", "window_minutes": 10080, "captured_at": start},
+                        "quota": {"used_percent": used, "resets_at": 999, "source": "oauth_usage_endpoint",
+                                  "window_minutes": 10080, "captured_at": start if end is None else end},
                         "tokens": {"total_tokens": tokens},
                     }
                 )
@@ -50,8 +52,8 @@ class EndToEndTests(unittest.TestCase):
                 self.assertEqual(len(payload["rows"]), 2)
                 self.assertAlmostEqual(payload["observed_weekly_percent"], 6)
                 by_machine = {row["machine_name"]: row for row in payload["rows"]}
-                self.assertAlmostEqual(by_machine["PC-A"]["weekly_percent"], 2)
-                self.assertAlmostEqual(by_machine["PC-B"]["weekly_percent"], 4)
+                self.assertAlmostEqual(by_machine["PC-A"]["weekly_percent"], 2.5)
+                self.assertAlmostEqual(by_machine["PC-B"]["weekly_percent"], 3.5)
                 self.assertEqual(by_machine["PC-A"]["estimated_tasks"], 1)
             finally:
                 server.shutdown()
@@ -62,4 +64,3 @@ class EndToEndTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

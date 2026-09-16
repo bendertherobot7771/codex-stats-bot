@@ -33,7 +33,7 @@ def _handler_factory(
     completion_notifier: Callable[[str], None] | None,
 ) -> type[BaseHTTPRequestHandler]:
     class Handler(BaseHTTPRequestHandler):
-        server_version = "CodexStats/0.2.3"
+        server_version = "CodexStats/0.3.0"
 
         def do_GET(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
@@ -71,11 +71,11 @@ def _handler_factory(
                 return
             if inserted and event.get("event_type") == "task_completed" and completion_notifier:
                 task = next(
-                    (row for row in database.recent_completed(20) if row["task_id"] == event["task_id"]),
+                    (row for row in database.accounting_data()[0] if row["task_id"] == event["task_id"]),
                     None,
                 )
                 if task:
-                    completion_notifier(task_completed_message(task))
+                    completion_notifier(task_completed_message(task, database))
             self._json(202, {"accepted": True, "duplicate": not inserted})
 
         def _authorized(self) -> bool:

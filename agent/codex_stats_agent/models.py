@@ -11,6 +11,8 @@ class QuotaSnapshot:
     resets_at: int | None = None
     source: str = "unavailable"
     captured_at: float | None = None
+    reset_credits_count: int | None = None
+    reset_credits_expire_at: list[float] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -51,6 +53,7 @@ class TrackedTask:
     tokens: TokenUsage = field(default_factory=TokenUsage)
     last_quota: QuotaSnapshot | None = None
     last_heartbeat_at: float = 0
+    last_activity_at: float = 0
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -69,6 +72,7 @@ class TrackedTask:
             tokens=TokenUsage(**value.get("tokens", {})),
             last_quota=(QuotaSnapshot(**value["last_quota"]) if value.get("last_quota") else None),
             last_heartbeat_at=float(value.get("last_heartbeat_at", 0)),
+            last_activity_at=float(value.get("last_activity_at", value.get("last_heartbeat_at", value.get("started_at", 0)))),
         )
 
 
@@ -77,4 +81,3 @@ def _integer(value: Any) -> int:
         return int(value or 0)
     except (TypeError, ValueError):
         return 0
-

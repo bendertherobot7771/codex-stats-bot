@@ -93,7 +93,7 @@ class StatsDatabase:
     def apply_event(self, event: dict[str, Any]) -> bool:
         event_id = _required_text(event, "event_id", 300)
         event_type = _required_text(event, "event_type", 40)
-        if event_type not in {"task_started", "task_heartbeat", "task_completed"}:
+        if event_type not in {"task_started", "task_heartbeat", "task_completed", "quota_snapshot"}:
             raise ValueError("Неизвестный event_type")
         task_id = _required_text(event, "task_id", 300)
         now = time.time()
@@ -105,6 +105,9 @@ class StatsDatabase:
             ).rowcount
             if not inserted:
                 return False
+            if event_type == "quota_snapshot":
+                _required_text(event, "account_fingerprint", 300)
+                return True
             if event_type == "task_started":
                 self._start_task(event, now)
             elif event_type == "task_heartbeat":
@@ -120,6 +123,13 @@ class StatsDatabase:
                 (since,),
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def accounting_data(self) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """One consistent view, including active tasks and late/offline events."""
+        with self._lock:
+            tasks = [dict(row) for row in self._connection.execute("SELECT * FROM tasks")]
+            events = [json.loads(row[0]) for row in self._connection.execute("SELECT payload_json FROM events")]
+        return tasks, events
 
     def active_tasks(self) -> list[dict[str, Any]]:
         with self._lock:

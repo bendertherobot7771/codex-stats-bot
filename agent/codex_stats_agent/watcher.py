@@ -39,6 +39,7 @@ class CodexWatcher:
         self.latest_quota: QuotaSnapshot | None = None
         self.account_id = account_fingerprint(self.codex_home)
         self.running = True
+        self.last_periodic_quota_at = 0.0
         self._load_state()
 
     def run(self) -> None:
@@ -57,6 +58,26 @@ class CodexWatcher:
         handled = 0
         for path in self.session_root.rglob("*.jsonl"):
             handled += self._read_appended(path)
+        now = time.time()
+        live_tasks = [task for task in self.active_tasks.values() if now - task.last_activity_at <= 600]
+        interval = 30 if live_tasks else 300
+        if now - self.last_periodic_quota_at >= interval:
+            self.last_periodic_quota_at = now
+            quota = self._fresh_quota()
+            if not live_tasks:
+                event = {"event_id": f"{self.config.machine_id}:quota:{int(now)}",
+                         "event_type": "quota_snapshot", "task_id": "quota_snapshot",
+                         "account_fingerprint": self.account_id, "sent_at": now,
+                         "machine_id": self.config.machine_id, "machine_name": self.config.machine_name,
+                         "user_name": self.config.user_name, "quota": quota.to_dict()}
+                try:
+                    self.client.send(event)
+                except ServerError:
+                    self.queue.append(event)
+            for task in live_tasks:
+                task.last_quota = quota
+                self._emit("task_heartbeat", task, quota=quota,
+                           event_id=f"{task.task_id}:poll:{int(now)}")
         self._save_state()
         return handled
 
@@ -120,11 +141,14 @@ class CodexWatcher:
             file_key,
             {"session_id": Path(file_key).stem, "thread_id": None, "cwd": None, "current_turn": None},
         )
+        active = self.active_tasks.get(f"{context['session_id']}:{context.get('current_turn')}")
+        if active:
+            active.last_activity_at = _event_timestamp(None, item.get("timestamp"))
 
         if event_type == "task_started":
             self._task_started(context, payload, item)
         elif event_type == "token_count":
-            self._token_count(context, payload)
+            self._token_count(context, payload, item)
         elif event_type == "task_complete":
             self._task_completed(context, payload, item)
 
@@ -145,14 +169,16 @@ class CodexWatcher:
             cwd=context.get("cwd"),
             started_at=_event_timestamp(payload.get("started_at"), item.get("timestamp")),
             start_quota=quota,
+            last_activity_at=_event_timestamp(payload.get("started_at"), item.get("timestamp")),
         )
         self.active_tasks[task_id] = task
         self._emit("task_started", task, quota=quota, event_id=f"{task_id}:start")
         LOGGER.info("Начато задание %s (%s)", turn_id, context.get("cwd") or "без проекта")
 
-    def _token_count(self, context: dict[str, Any], payload: dict[str, Any]) -> None:
+    def _token_count(self, context: dict[str, Any], payload: dict[str, Any], item: dict[str, Any]) -> None:
         log_quota = quota_from_log_payload(payload.get("rate_limits"))
         if log_quota:
+            log_quota.captured_at = _event_timestamp(None, item.get("timestamp"))
             self.latest_quota = log_quota
         turn_id = context.get("current_turn")
         if not turn_id:

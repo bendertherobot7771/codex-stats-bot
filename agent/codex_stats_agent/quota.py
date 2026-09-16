@@ -13,6 +13,7 @@ from .models import QuotaSnapshot
 
 
 DEFAULT_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
+RESET_CREDITS_URL = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits"
 
 
 class QuotaError(RuntimeError):
@@ -54,7 +55,29 @@ def fetch_weekly_quota(codex_home: Path, timeout: float = 10.0) -> QuotaSnapshot
     snapshot = quota_from_usage_response(payload)
     snapshot.source = "oauth_usage_endpoint"
     snapshot.captured_at = time.time()
+    summary = payload.get("rate_limit_reset_credits") or {}
+    if isinstance(summary, dict) and "available_count" in summary:
+        snapshot.reset_credits_count = _integer(summary["available_count"])
+    # Read only: never call the separate /consume endpoint.
+    credit_request = urllib.request.Request(RESET_CREDITS_URL, headers=dict(request.header_items()))
+    try:
+        with urllib.request.urlopen(credit_request, timeout=timeout) as response:
+            apply_reset_credits(snapshot, json.load(response))
+    except (urllib.error.URLError, TimeoutError, ValueError, OSError):
+        pass  # Quota remains usable even when optional credit metadata is unavailable.
     return snapshot
+
+
+def apply_reset_credits(snapshot: QuotaSnapshot, payload: dict[str, Any]) -> None:
+    available = [credit for credit in payload.get("credits", [])
+                 if isinstance(credit, dict) and credit.get("status") == "available"
+                 and credit.get("reset_type") == "codex_rate_limits"
+                 and credit.get("is_supported_by_plan", True)]
+    snapshot.reset_credits_count = len(available)
+    snapshot.reset_credits_expire_at = sorted(
+        stamp for credit in available
+        if (stamp := _timestamp(credit.get("expires_at"), 0)) > 0
+    )
 
 
 def quota_from_usage_response(payload: dict[str, Any]) -> QuotaSnapshot:
@@ -69,9 +92,11 @@ def quota_from_usage_response(payload: dict[str, Any]) -> QuotaSnapshot:
         raise QuotaError("Ответ Codex не содержит primary/secondary rate-limit window")
 
     weekly = next(
-        (item for item in windows if _integer(item.get("limit_window_seconds")) >= 86_400),
-        windows[-1],
+        (item for item in windows if _integer(item.get("limit_window_seconds")) == 604_800),
+        None,
     )
+    if weekly is None:
+        raise QuotaError("Ответ Codex не содержит недельного окна")
     seconds = _integer(weekly.get("limit_window_seconds")) or None
     return QuotaSnapshot(
         used_percent=_float(weekly.get("used_percent", weekly.get("usage_percent"))),
@@ -85,14 +110,18 @@ def quota_from_usage_response(payload: dict[str, Any]) -> QuotaSnapshot:
 def quota_from_log_payload(rate_limits: dict[str, Any] | None) -> QuotaSnapshot | None:
     if not isinstance(rate_limits, dict):
         return None
+    if rate_limits.get("limit_id") not in (None, "codex"):
+        return None
     candidates = [rate_limits.get("primary"), rate_limits.get("secondary")]
     windows = [item for item in candidates if isinstance(item, dict)]
     if not windows:
         return None
     weekly = next(
-        (item for item in windows if _integer(item.get("window_minutes")) >= 1_440),
-        windows[-1],
+        (item for item in windows if _integer(item.get("window_minutes")) == 10_080),
+        None,
     )
+    if weekly is None:
+        return None
     return QuotaSnapshot(
         used_percent=_float(weekly.get("used_percent")),
         window_minutes=_integer(weekly.get("window_minutes")) or None,

@@ -5,7 +5,6 @@ import time
 import unittest
 from pathlib import Path
 
-from server.codex_stats_server.allocation import allocate_weekly_percent
 from server.codex_stats_server.database import StatsDatabase
 from server.codex_stats_server.reports import stats_payload, telegram_weeks, weekly_windows
 
@@ -33,45 +32,10 @@ def event(
         "session_id": "session",
         "started_at": started,
         "finished_at": finished,
-        "start_quota": {"used_percent": 10, "resets_at": 999, "source": "test"},
-        "quota": {"used_percent": used, "resets_at": 999, "source": "test"},
+        "start_quota": {"used_percent": 10, "resets_at": 999, "source": "oauth_usage_endpoint", "window_minutes": 10080, "captured_at": started},
+        "quota": {"used_percent": used, "resets_at": 999, "source": "oauth_usage_endpoint", "window_minutes": 10080, "captured_at": finished if finished is not None else started},
         "tokens": {"total_tokens": tokens},
     }
-
-
-class AllocationTests(unittest.TestCase):
-    def test_overlapping_tasks_share_one_global_delta(self) -> None:
-        tasks = [
-            {
-                "task_id": "a",
-                "account_fingerprint": "account",
-                "status": "completed",
-                "started_at": 0,
-                "finished_at": 10,
-                "start_used_percent": 20,
-                "end_used_percent": 24,
-                "start_reset_at": 100,
-                "end_reset_at": 100,
-                "total_tokens": 100,
-            },
-            {
-                "task_id": "b",
-                "account_fingerprint": "account",
-                "status": "completed",
-                "started_at": 5,
-                "finished_at": 15,
-                "start_used_percent": 21,
-                "end_used_percent": 26,
-                "start_reset_at": 100,
-                "end_reset_at": 100,
-                "total_tokens": 200,
-            },
-        ]
-        allocations = allocate_weekly_percent(tasks)
-        self.assertAlmostEqual(sum(item.weekly_percent or 0 for item in allocations.values()), 6)
-        self.assertAlmostEqual(allocations["a"].weekly_percent or 0, 2)
-        self.assertAlmostEqual(allocations["b"].weekly_percent or 0, 4)
-        self.assertEqual(allocations["a"].confidence, "allocated_overlap")
 
 
 class DatabaseTests(unittest.TestCase):
@@ -115,6 +79,7 @@ class DatabaseTests(unittest.TestCase):
 
                 now = time.time()
                 for task_id, reset in (("old", 1_000), ("new", 2_000)):
+                    now += 200
                     start = event("task_started", task_id, user="Иван", machine="PC-1", started=now - 100)
                     finish = event("task_completed", task_id, user="Иван", machine="PC-1", started=now - 100, finished=now, used=12, tokens=100)
                     start["start_quota"]["resets_at"] = reset
