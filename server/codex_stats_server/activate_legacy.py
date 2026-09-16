@@ -12,6 +12,7 @@ from common.releases import verify
 from .database import StatsDatabase
 from .lifecycle import Lifecycle
 from .telegram_bot import TelegramBot
+from . import __version__
 from .update_service import CACHE, ROOT, STATE, atomic_json, control, healthy
 
 
@@ -56,7 +57,7 @@ def main() -> int:
         db.close()
         return 0
     if state.get("phase") != "warning":
-        bot.announce_maintenance("Через 60 секунд начнётся установка системы автообновления 0.4.0.\n"
+        bot.announce_maintenance(f"Через 60 секунд начнётся установка системы автообновления {__version__}.\n"
                                  "Пожалуйста, пока не запускайте задания Codex. При новой активности установка будет отложена.")
         atomic_json(state_path, {"phase": "warning", "at": time.time()})
         db.close()
@@ -64,11 +65,11 @@ def main() -> int:
     if time.time() - state["at"] < 60:
         db.close()
         return 0
-    envelope = json.loads((CACHE / "0.4.0" / "release.json").read_text())
+    envelope = json.loads((CACHE / __version__ / "release.json").read_text())
     manifest = verify(envelope)
-    if manifest["version"] != "0.4.0":
+    if manifest["version"] != __version__:
         raise ValueError("Wrong migration release")
-    release_root = ROOT / "releases" / "0.4.0"
+    release_root = ROOT / "releases" / __version__
     unit_path = Path('/etc/systemd/system/codex-stats-bot.service')
     previous_unit = STATE / 'legacy-service.backup'
     if not previous_unit.exists():
@@ -94,9 +95,9 @@ def main() -> int:
         subprocess.run(['systemctl','daemon-reload'],check=True)
         subprocess.run(['systemctl','start','codex-stats-bot'],check=True)
         for _ in range(20):
-            if healthy('0.4.0'): break
+            if healthy(__version__): break
             time.sleep(1)
-        if not healthy('0.4.0'):
+        if not healthy(__version__):
             raise RuntimeError('New server did not start')
         control('offer',envelope=envelope)
         control('finish')

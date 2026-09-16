@@ -216,7 +216,7 @@ class WindowsRollbackTests(unittest.TestCase):
             with patch.object(updater,'APP_DIR',app), patch.object(updater.AgentConfig,'load',return_value=cfg), \
                  patch.object(updater,'verify',return_value=manifest), patch.dict(os.environ,LOCALAPPDATA=str(root/'local')), \
                  patch.object(updater.subprocess,'CREATE_NO_WINDOW',0,create=True), patch.object(updater.subprocess,'Popen',Process):
-                result = updater.apply_update(stage)
+                result = updater.apply_update(stage, installed_version='0.4.0')
             self.assertEqual(result, 0 if healthy else 1)
             self.assertEqual(target.read_bytes(), b'new' if healthy else b'old')
             return json.loads((app/'updates'/'result.json').read_text())

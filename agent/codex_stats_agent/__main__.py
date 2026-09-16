@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import argparse
 import logging
+from logging.handlers import RotatingFileHandler
 import sys
 from pathlib import Path
 
 from . import __version__
-from .config import AgentConfig, DEFAULT_CONFIG_PATH, create_config
+from .config import APP_DIR, AgentConfig, DEFAULT_CONFIG_PATH, create_config
 from .quota import QuotaError, account_fingerprint, fetch_weekly_quota, latest_logged_quota
 from .watcher import CodexWatcher
 
@@ -30,6 +31,9 @@ def build_parser() -> argparse.ArgumentParser:
     enrollment.add_argument("--code", required=True)
     update = subparsers.add_parser("apply-update", help=argparse.SUPPRESS)
     update.add_argument("--stage", required=True, type=Path)
+    source_update = subparsers.add_parser("apply-source-update", help=argparse.SUPPRESS)
+    source_update.add_argument("--stage", required=True, type=Path)
+    subparsers.add_parser("stop", help="запросить безопасную остановку агента")
     legacy = subparsers.add_parser("legacy-upgrade", help="однократное обновление 0.3.0 в простое")
     legacy.add_argument("--stage", required=True, type=Path)
     return parser
@@ -37,6 +41,27 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.command == "stop":
+        directory = APP_DIR / "updates"
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "stop-request").touch()
+        return 0
+    if args.command == "apply-source-update":
+        import os
+        from .source_update import apply_source, command
+        from .instance import single_instance
+        from .updater import wait_for_exit
+        import json
+        import subprocess
+        root = Path(os.environ["CODEX_STATS_INSTALL_ROOT"])
+        with single_instance(root / "update.lock"):
+            try:
+                return apply_source(args.stage)
+            except Exception:
+                guard = json.loads((args.stage / "guard.json").read_text())
+                if wait_for_exit(guard["pid"]):
+                    subprocess.Popen(command(root), creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                return 1
     if args.command == "enroll":
         from .updater import enroll
         enroll(args.server_url, args.code, args.config)
@@ -48,10 +73,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "legacy-upgrade":
         from .updater import legacy_upgrade
         return legacy_upgrade(args.stage)
+    APP_DIR.mkdir(parents=True, exist_ok=True)
+    handler = logging.StreamHandler(sys.stdout) if sys.stdout is not None else RotatingFileHandler(
+        APP_DIR / "agent.log", maxBytes=1_000_000, backupCount=2, encoding="utf-8")
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
-        handlers=[logging.StreamHandler(sys.stdout)],
+        handlers=[handler],
     )
 
     if args.command == "configure":
@@ -95,7 +123,9 @@ def main(argv: list[str] | None = None) -> int:
         print("Снимок недельного лимита не найден", file=sys.stderr)
         return 3
 
-    CodexWatcher(config).run()
+    from .instance import single_instance
+    with single_instance(APP_DIR / "agent.lock"):
+        CodexWatcher(config).run()
     return 0
 
 

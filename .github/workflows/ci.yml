@@ -75,4 +75,5 @@ jobs:
             dist/codex-stats-agent.exe
             dist/server.tar.gz
             dist/release.json
+            dist/agent-source.zip
           generate_release_notes: true

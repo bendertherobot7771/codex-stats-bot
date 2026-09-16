@@ -43,7 +43,10 @@ def verify(envelope: dict) -> dict:
         raise ValueError("Release requires manual compatibility/migration review")
     if manifest.get("min_agent_protocol", 999) > PROTOCOL:
         raise ValueError("Incompatible agents")
-    for name in ("server.tar.gz", "codex-stats-agent.exe"):
+    names = ["server.tar.gz", "codex-stats-agent.exe"]
+    if "agent-source.zip" in manifest["assets"]:
+        names.append("agent-source.zip")
+    for name in names:
         item = manifest["assets"][name]
         if not re.fullmatch(r"[a-f0-9]{64}", item["sha256"]) or not 0 < item["size"] <= 150_000_000:
             raise ValueError("Invalid asset metadata")
@@ -71,6 +74,6 @@ def download(url: str, destination: Path, *, limit: int = 150_000_000) -> None:
 
 def asset_url(release_version: str, name: str) -> str:
     version(release_version)
-    if name not in ("release.json", "server.tar.gz", "codex-stats-agent.exe"):
+    if name not in ("release.json", "server.tar.gz", "codex-stats-agent.exe", "agent-source.zip"):
         raise ValueError("Invalid asset name")
     return f"https://github.com/{REPOSITORY}/releases/download/v{release_version}/{name}"

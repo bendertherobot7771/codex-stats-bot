@@ -65,7 +65,8 @@ class AgentUpdater:
         temporary.write_text(json.dumps(health))
         temporary.replace(self.directory / "health.json")
         envelope = reply.get("update")
-        if not envelope or not getattr(sys, "frozen", False):
+        source_root = os.environ.get("CODEX_STATS_INSTALL_ROOT")
+        if not envelope or not (getattr(sys, "frozen", False) or source_root):
             return
         manifest = verify(envelope)
         target_version = manifest["version"]
@@ -75,10 +76,48 @@ class AgentUpdater:
         if failed.exists():
             return
         stage = self.directory / target_version
+        if source_root:
+            from .source_update import ASSET, prepare, atomic
+            archive = stage / ASSET
+            if not archive.exists():
+                download(asset_url(target_version, ASSET), archive)
+            try:
+                prepare(stage, Path(source_root), manifest)
+            except (OSError, ValueError, subprocess.SubprocessError):
+                atomic(failed, {"error": "source_preflight_failed"})
+                atomic(result_file, {"update_result": "blocked", "update_error": "Python-пакет не прошёл проверку; старый агент работает"})
+                return
+            watcher.poll_once()
+            watcher.queue.drain(watcher.client)
+            if watcher.active_tasks or watcher.queue._load():
+                return
+            data["begin_update"] = target_version
+            reply = rpc(watcher.config, "/api/v1/agent/checkin", data)
+            if reply.get("lease_until", 0) <= time.time():
+                return
+            atomic(stage / "release.json", envelope)
+            atomic(stage / "guard.json", {"logs": log_fingerprint(watcher.codex_home),
+                                          "lease_until": reply["lease_until"], "pid": os.getpid()})
+            watcher._save_state()
+            subprocess.Popen([sys.executable, "-B", str(Path(source_root) / "launch.py"),
+                              "apply-source-update", "--stage", str(stage)],
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            watcher.stop()
+            return
         binary = stage / "codex-stats-agent.exe"
         if not binary.exists():
             download(asset_url(target_version, binary.name), binary)
         check_file(binary, manifest["assets"][binary.name])
+        # Check OS execution policy BEFORE stopping the working collector.
+        try:
+            executable_version = subprocess.check_output([str(binary), "--version"], timeout=30,
+                                                         creationflags=subprocess.CREATE_NO_WINDOW).decode().strip()
+            if executable_version != target_version:
+                raise ValueError("Executable version mismatch")
+        except (OSError, ValueError, subprocess.SubprocessError):
+            failed.write_text(json.dumps({"error": "preflight_failed"}))
+            result_file.write_text(json.dumps({"update_result": "blocked", "update_error": "Новый exe не запускается; текущий агент сохранён"}))
+            return
         # Re-read logs after the potentially slow download before asking for a lease.
         watcher.poll_once()
         watcher.queue.drain(watcher.client)
@@ -127,6 +166,7 @@ def _apply_update(stage: Path, installed_version: str | None = None) -> int:
     flags = subprocess.CREATE_NO_WINDOW
     switched = False
     old_exited = False
+    process = None
     try:
         old_exited = wait_for_exit(int(guard.get("pid", 0)))
         if not old_exited:
@@ -177,9 +217,13 @@ def _apply_update(stage: Path, installed_version: str | None = None) -> int:
         return 0
     except Exception as error:
         deferred = isinstance(error, UpdateDeferred)
+        if switched and (process is None or process.poll() is not None):
+            os.replace(backup, target)
+            switched = False
         if not deferred:
             (update_dir / f"failed-{manifest['version']}.json").write_text(json.dumps({"error": type(error).__name__}))
-        (update_dir / "result.json").write_text(json.dumps({"update_result": "deferred" if deferred else "rollback", "update_error": type(error).__name__}))
+        result = "manual" if switched else "deferred" if deferred else "rollback"
+        (update_dir / "result.json").write_text(json.dumps({"update_result": result, "update_error": type(error).__name__}))
         if not switched and old_exited:
             subprocess.Popen([str(target), "watch"], creationflags=flags)
         return 2 if deferred else 1
@@ -209,13 +253,18 @@ def legacy_upgrade(stage: Path) -> int:
     from .watcher import CodexWatcher
     from .api import ServerClient
     manifest = verify(json.loads((stage / "release.json").read_text()))
-    if manifest["version"] != "0.4.0":
-        raise ValueError("Legacy migration is only for 0.3.0 -> 0.4.0")
-    binary = stage / "codex-stats-agent.exe"
-    check_file(binary, manifest["assets"][binary.name])
+    if manifest["version"] != __version__:
+        raise ValueError("Legacy migration must use the running helper's signed release")
+    source_root = os.environ.get("CODEX_STATS_INSTALL_ROOT")
+    if source_root:
+        from .source_update import prepare
+        prepare(stage, Path(source_root), manifest)
+    else:
+        binary = stage / "codex-stats-agent.exe"
+        check_file(binary, manifest["assets"][binary.name])
     target = Path(os.environ["LOCALAPPDATA"]) / "CodexStatsAgent" / "codex-stats-agent.exe"
     installed = subprocess.check_output([str(target), "--version"], creationflags=subprocess.CREATE_NO_WINDOW).decode().strip()
-    if installed == "0.4.0":
+    if installed == manifest["version"]:
         clear_legacy_startup(stage)
         return 0
     if installed != "0.3.0":
@@ -260,8 +309,22 @@ def legacy_upgrade(stage: Path) -> int:
                 subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", command],
                                check=True, creationflags=subprocess.CREATE_NO_WINDOW)
                 (stage / "guard.json").write_text(json.dumps({"logs": logs, "lease_until": reply["lease_until"], "pid": 0}))
-                result = apply_update(stage, installed_version=installed)
+                if source_root:
+                    from .source_update import apply_source, atomic
+                    from .instance import single_instance
+                    with single_instance(Path(source_root) / 'update.lock'):
+                        atomic(Path(source_root) / 'current.json', {'legacy': True})
+                        result = apply_source(stage, installed_version=installed)
+                else:
+                    result = apply_update(stage, installed_version=installed)
                 if result != 2:
+                    if result == 0 and source_root:
+                        try:
+                            install_source_startup(Path(source_root))
+                        except Exception:
+                            # Collector is already healthy; never repeat the stop/switch sequence.
+                            print("Python collector running; startup registration needs manual repair", flush=True)
+                            return 1
                     clear_legacy_startup(stage)
                     if result:
                         try:
@@ -272,6 +335,22 @@ def legacy_upgrade(stage: Path) -> int:
         except Exception as error:
             print("Legacy upgrade waiting:", type(error).__name__, flush=True)
         time.sleep(15)
+
+
+def install_source_startup(root: Path) -> None:
+    """Per-user shortcut, no elevation. Retire only our exact legacy launcher."""
+    def quote(value):
+        return "'" + str(value).replace("'", "''") + "'"
+    executable = Path(sys.executable).with_name("pythonw.exe")
+    arguments = '-B "' + str(root / "launch.py") + '" watch'
+    script = ("$ErrorActionPreference='Stop'; $startup=[Environment]::GetFolderPath('Startup'); "
+              "$link=(New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path $startup 'CodexStatsAgent.lnk')); "
+              "$link.TargetPath=" + quote(executable) + "; $link.Arguments=" + quote(arguments) + "; $link.Save(); "
+              "$old=Join-Path $startup 'CodexStatsAgent.vbs'; "
+              "if ((Test-Path -LiteralPath $old) -and ((Get-Content -LiteralPath $old -Raw).Contains(" +
+              quote(str(root / 'codex-stats-agent.exe')) + "))) { Remove-Item -LiteralPath $old }")
+    subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
+                   check=True, timeout=30, creationflags=subprocess.CREATE_NO_WINDOW)
 
 
 def clear_legacy_startup(stage: Path) -> None:

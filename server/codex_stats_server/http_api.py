@@ -36,7 +36,7 @@ def _handler_factory(
     lifecycle=None,
 ) -> type[BaseHTTPRequestHandler]:
     class Handler(BaseHTTPRequestHandler):
-        server_version = "CodexStats/0.4.0"
+        server_version = "CodexStats/0.4.1"
 
         def setup(self) -> None:
             super().setup()

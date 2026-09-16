@@ -51,14 +51,14 @@ class Lifecycle:
         if not self.public_url:
             return "Адрес сервера ещё не настроен (CODEX_STATS_PUBLIC_URL)."
         code = self.code(admin)
-        script = "https://raw.githubusercontent.com/bendertherobot7771/codex-stats-bot/v0.4.0/agent/bootstrap.ps1"
+        script = "https://raw.githubusercontent.com/bendertherobot7771/codex-stats-bot/v0.4.1/agent/bootstrap.ps1"
         return ("Подключение Windows-ПК\n\nКод (одноразовый, действует 15 минут):\n" + code +
                 "\n\nОткройте PowerShell от обычного пользователя и вставьте команду целиком:\n\n" +
                 "$p = Join-Path $env:TEMP ('codex-stats-install-' + [guid]::NewGuid() + '.ps1'); " +
                 "Invoke-WebRequest '" + script + "' -OutFile $p -UseBasicParsing; " +
                 "powershell -NoProfile -ExecutionPolicy Bypass -File $p -ServerUrl '" + self.public_url +
                 "' -Code '" + code + "'\n\n" +
-                "Агент установится для текущего пользователя, добавится в автозагрузку и будет обновляться в простое. " +
+                "Установщик сам добавит отдельный Python и агент для текущего пользователя, настроит автозапуск и обновления в простое. " +
                 "Нужна локальная авторизация Codex. Git и Python не требуются. " +
                 "Адрес 192.168.x.x доступен только в домашней сети; для другого места нужен настроенный HTTPS-адрес сервера. " +
                 "Не пересылайте код посторонним.")
@@ -144,8 +144,11 @@ class Lifecycle:
                     elif now - device["update_warning_at"] >= 60:
                         response["lease_until"] = now + 60
             if data.get("update_result"):
-                result = {"success": "успешно обновлён", "deferred": "отложил обновление из-за активности; старая версия продолжает работу"}.get(data["update_result"], "вернулся к предыдущей версии после ошибки")
-                self.announce(f"{device['machine_name']} {result}. Версия {client_version}. Можно продолжать работу.")
+                result = {"success": "успешно обновлён", "deferred": "отложил обновление из-за активности; старая версия продолжает работу",
+                          "blocked": "не смог запустить новый пакет агента; текущий агент не остановлен",
+                          "manual": "не смог безопасно завершить обновление; требуется ручная проверка агента"}.get(data["update_result"], "вернулся к предыдущей версии после ошибки")
+                suffix = "Проверьте состояние перед продолжением работы." if data["update_result"] == "manual" else "Можно продолжать работу."
+                self.announce(f"{device['machine_name']} {result}. Версия {client_version}. {suffix}")
             return response
 
     def ready(self) -> tuple[bool, str]:
