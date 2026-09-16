@@ -1,0 +1,12 @@
+[Unit]
+Description=Safe idle-only Codex Stats updater
+After=network-online.target codex-stats-bot.service
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/codex-stats-updater
+EnvironmentFile=/etc/codex-stats-bot.env
+ExecStart=/usr/bin/python3 /opt/codex-stats-updater/server/updater_runner.py
+TimeoutStartSec=300
+UMask=0022

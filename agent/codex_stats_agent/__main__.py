@@ -25,11 +25,29 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("watch", help="постоянно отслеживать новые задания Codex")
     subparsers.add_parser("status", help="проверить конфигурацию, авторизацию и недельный лимит")
+    enrollment = subparsers.add_parser("enroll", help="подключиться по одноразовому коду из Telegram")
+    enrollment.add_argument("--server-url", required=True)
+    enrollment.add_argument("--code", required=True)
+    update = subparsers.add_parser("apply-update", help=argparse.SUPPRESS)
+    update.add_argument("--stage", required=True, type=Path)
+    legacy = subparsers.add_parser("legacy-upgrade", help="однократное обновление 0.3.0 в простое")
+    legacy.add_argument("--stage", required=True, type=Path)
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.command == "enroll":
+        from .updater import enroll
+        enroll(args.server_url, args.code, args.config)
+        print("Компьютер подключён. Конфигурация сохранена.")
+        return 0
+    if args.command == "apply-update":
+        from .updater import apply_update
+        return apply_update(args.stage)
+    if args.command == "legacy-upgrade":
+        from .updater import legacy_upgrade
+        return legacy_upgrade(args.stage)
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",

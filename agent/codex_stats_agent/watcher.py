@@ -43,6 +43,9 @@ class CodexWatcher:
         self._load_state()
 
     def run(self) -> None:
+        from .updater import AgentUpdater
+        updater = AgentUpdater(self)
+        self._reconcile_tasks()
         self.session_root.mkdir(parents=True, exist_ok=True)
         if not self.offsets:
             self._bootstrap_offsets()
@@ -50,8 +53,18 @@ class CodexWatcher:
         self._install_signal_handlers()
         LOGGER.info("Слежение запущено: пользователь=%s, ПК=%s", self.config.user_name, self.config.machine_name)
         while self.running:
+            stop_request = updater.directory / "stop-request"
+            if stop_request.exists():
+                stop_request.unlink()
+                self._save_state()
+                self.queue.drain(self.client)
+                break
             self.poll_once()
             self.queue.drain(self.client)
+            try:
+                updater.tick()
+            except Exception as error:
+                LOGGER.warning("Проверка обновления отложена: %s", type(error).__name__)
             time.sleep(self.config.poll_interval_seconds)
 
     def poll_once(self) -> int:
@@ -151,6 +164,39 @@ class CodexWatcher:
             self._token_count(context, payload, item)
         elif event_type == "task_complete":
             self._task_completed(context, payload, item)
+        elif event_type in ("turn_aborted", "task_aborted"):
+            turn = str(payload.get("turn_id") or context.get("current_turn") or "")
+            self.active_tasks.pop(f"{context['session_id']}:{turn}", None)
+            context["current_turn"] = None
+
+    def _reconcile_tasks(self) -> None:
+        """Retire a restored task only with terminal or superseding-turn evidence."""
+        for task_id, task in list(self.active_tasks.items()):
+            paths = [p for p, c in self.contexts.items()
+                     if c.get("session_id") == task.session_id or Path(p).stem == task.session_id]
+            terminated = False
+            for path in paths:
+                try:
+                    with Path(path).open(encoding="utf-8") as stream:
+                        for line in stream:
+                            try:
+                                item = json.loads(line)
+                            except ValueError:
+                                continue
+                            payload = item.get("payload") or {}
+                            if item.get("type") != "event_msg" or not isinstance(payload, dict):
+                                continue
+                            kind, turn = payload.get("type"), payload.get("turn_id")
+                            if turn == task.turn_id and kind in ("task_complete", "turn_aborted", "task_aborted"):
+                                terminated = True
+                            if (kind == "task_started" and turn and turn != task.turn_id
+                                    and _event_timestamp(payload.get("started_at"), item.get("timestamp")) > task.started_at):
+                                terminated = True
+                except OSError:
+                    continue
+            if terminated:
+                self.active_tasks.pop(task_id, None)
+        self._save_state()
 
     def _task_started(self, context: dict[str, Any], payload: dict[str, Any], item: dict[str, Any]) -> None:
         turn_id = str(payload.get("turn_id") or "")

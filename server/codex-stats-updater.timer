@@ -1,0 +1,11 @@
+[Unit]
+Description=Check Codex Stats releases and idle maintenance gate
+
+[Timer]
+OnBootSec=120
+OnUnitActiveSec=60
+RandomizedDelaySec=10
+Persistent=true
+
+[Install]
+WantedBy=timers.target

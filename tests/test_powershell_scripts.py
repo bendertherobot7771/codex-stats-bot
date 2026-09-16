@@ -7,7 +7,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPTS = (ROOT / "agent" / "install.ps1", ROOT / "agent" / "uninstall.ps1")
+SCRIPTS = (ROOT / "agent" / "install.ps1", ROOT / "agent" / "uninstall.ps1", ROOT / "agent" / "bootstrap.ps1")
 
 
 class PowerShellScriptTests(unittest.TestCase):

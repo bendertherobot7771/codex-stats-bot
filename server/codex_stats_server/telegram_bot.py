@@ -22,9 +22,11 @@ class TelegramBot:
         admin_chat_ids: set[int],
         initial_viewer_chat_ids: set[int],
         database: StatsDatabase,
+        lifecycle=None,
     ):
         self.base_url = f"https://api.telegram.org/bot{token}"
         self.database = database
+        self.lifecycle = lifecycle
         for chat_id in admin_chat_ids:
             database.ensure_bot_user(chat_id, "admin", "Администратор")
         for chat_id in initial_viewer_chat_ids - admin_chat_ids:
@@ -103,6 +105,10 @@ class TelegramBot:
             response, markup = telegram_last(self.database), None
         elif command == "/users" and user["role"] == "admin":
             response, markup = self._users_message()
+        elif command == "/addpc" and user["role"] == "admin" and self.lifecycle:
+            response, markup = self.lifecycle.instructions(chat_id), None
+        elif command == "/updates" and self.lifecycle:
+            response, markup = self.lifecycle.description(), None
         elif command == "/adduser" and user["role"] == "admin":
             response, markup = self._add_user(chat_id, text), None
         elif command == "/removeuser" and user["role"] == "admin":
@@ -205,6 +211,16 @@ class TelegramBot:
             except Exception as error:
                 LOGGER.warning("Не удалось выполнить запрос Telegram: %s", error)
 
+    def announce_maintenance(self, text: str) -> None:
+        # Do not begin maintenance if Telegram could not deliver the warning.
+        chats = self.database.notification_chats()
+        if not chats:
+            chats = [u["chat_id"] for u in self.database.bot_users() if u["role"] == "admin"]
+        if not chats:
+            raise RuntimeError("No maintenance notification recipient")
+        for chat in chats:
+            self._request("sendMessage", {"chat_id": chat, "text": text})
+
     def _request(self, method: str, payload: dict[str, Any]) -> dict[str, Any]:
         request = urllib.request.Request(
             f"{self.base_url}/{method}",
@@ -231,11 +247,13 @@ def _help(role: str) -> str:
         "/active — активные задания",
         "/last — последние задания",
         "/whoami — показать Telegram chat ID",
+        "/updates — версии ПК и состояние автообновления",
     ]
     if role == "admin":
         lines.extend(
             [
                 "/users — участники и кнопки удаления",
+                "/addpc — код и инструкция подключения Windows-ПК",
                 "/adduser CHAT_ID [имя] — дать доступ",
                 "/removeuser CHAT_ID — отозвать доступ",
             ]
@@ -250,6 +268,8 @@ def _telegram_commands() -> list[dict[str, str]]:
         {"command": "active", "description": "активные задания"},
         {"command": "last", "description": "последние задания"},
         {"command": "users", "description": "управление участниками (админ)"},
+        {"command": "addpc", "description": "подключить Windows-ПК (админ)"},
+        {"command": "updates", "description": "версии и автообновление"},
         {"command": "whoami", "description": "показать Telegram chat ID"},
         {"command": "help", "description": "справка"},
     ]

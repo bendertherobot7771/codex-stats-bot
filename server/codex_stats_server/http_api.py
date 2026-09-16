@@ -10,6 +10,7 @@ from urllib.parse import parse_qs, urlparse
 
 from .database import StatsDatabase
 from .reports import stats_payload, task_completed_message
+from . import __version__
 
 
 LOGGER = logging.getLogger("codex_stats_http")
@@ -22,8 +23,9 @@ def create_server(
     database: StatsDatabase,
     api_key: str,
     completion_notifier: Callable[[str], None] | None = None,
+    lifecycle=None,
 ) -> ThreadingHTTPServer:
-    handler = _handler_factory(database, api_key, completion_notifier)
+    handler = _handler_factory(database, api_key, completion_notifier, lifecycle)
     return ThreadingHTTPServer((host, port), handler)
 
 
@@ -31,14 +33,20 @@ def _handler_factory(
     database: StatsDatabase,
     api_key: str,
     completion_notifier: Callable[[str], None] | None,
+    lifecycle=None,
 ) -> type[BaseHTTPRequestHandler]:
     class Handler(BaseHTTPRequestHandler):
-        server_version = "CodexStats/0.3.0"
+        server_version = "CodexStats/0.4.0"
+
+        def setup(self) -> None:
+            super().setup()
+            self.connection.settimeout(30)
 
         def do_GET(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
             if parsed.path == "/health":
-                self._json(200, {"status": "ok", "time": time.time()})
+                self._json(200, {"status": "ok", "time": time.time(), "version": __version__,
+                                 "maintenance": bool(lifecycle and lifecycle.blocked())})
                 return
             if not self._authorized():
                 return
@@ -53,9 +61,10 @@ def _handler_factory(
             self._json(404, {"error": "not_found"})
 
         def do_POST(self) -> None:  # noqa: N802
-            if not self._authorized():
+            path = urlparse(self.path).path
+            if path != "/api/v1/enroll" and not self._authorized(admin=path == "/api/v1/control/updates"):
                 return
-            if urlparse(self.path).path != "/api/v1/events":
+            if path not in ("/api/v1/events", "/api/v1/enroll", "/api/v1/agent/checkin", "/api/v1/control/updates"):
                 self._json(404, {"error": "not_found"})
                 return
             try:
@@ -65,9 +74,39 @@ def _handler_factory(
                 event = json.loads(self.rfile.read(length))
                 if not isinstance(event, dict):
                     raise ValueError("Ожидался JSON-объект")
-                inserted = database.apply_event(event)
+                if path == "/api/v1/enroll":
+                    if lifecycle is None:
+                        raise ValueError("Enrollment is not configured")
+                    self._json(200, lifecycle.enroll(event, self.client_address[0]))
+                    return
+                if path == "/api/v1/agent/checkin":
+                    if lifecycle is None:
+                        raise ValueError("Updates are not configured")
+                    machine = getattr(self, "device_id", None) or str(event.get("machine_id", ""))
+                    if not machine or len(machine) > 100:
+                        raise ValueError("Invalid machine identity")
+                    self._json(200, lifecycle.checkin(event, machine))
+                    return
+                if path == "/api/v1/control/updates":
+                    if lifecycle is None:
+                        raise ValueError("Updates are not configured")
+                    self._json(200, lifecycle.control(event))
+                    return
+                if getattr(self, "device_id", None) and event.get("machine_id") != self.device_id:
+                    self._json(403, {"error": "wrong_machine"})
+                    return
+                with database._lock:
+                    if lifecycle and lifecycle.blocked():
+                        self._json(503, {"error": "maintenance", "retry": True})
+                        return
+                    inserted = database.apply_event(event)
+                    if inserted and lifecycle:
+                        lifecycle.on_event(event)
             except (ValueError, json.JSONDecodeError) as error:
                 self._json(400, {"error": "invalid_event", "detail": str(error)})
+                return
+            except (OSError, RuntimeError, KeyError):
+                self._json(503, {"error": "temporarily_unavailable"})
                 return
             if inserted and event.get("event_type") == "task_completed" and completion_notifier:
                 task = next(
@@ -78,13 +117,18 @@ def _handler_factory(
                     completion_notifier(task_completed_message(task, database))
             self._json(202, {"accepted": True, "duplicate": not inserted})
 
-        def _authorized(self) -> bool:
+        def _authorized(self, admin: bool = False) -> bool:
             expected = f"Bearer {api_key}"
             actual = self.headers.get("Authorization", "")
-            if not hmac.compare_digest(actual, expected):
-                self._json(401, {"error": "unauthorized"})
-                return False
-            return True
+            self.device_id = None
+            if hmac.compare_digest(actual, expected):
+                return True
+            if not admin and lifecycle and actual.startswith("Bearer "):
+                self.device_id = lifecycle.authenticate(actual[7:])
+                if self.device_id:
+                    return True
+            self._json(401, {"error": "unauthorized"})
+            return False
 
         def _json(self, status: int, value: dict[str, Any]) -> None:
             body = json.dumps(value, ensure_ascii=False).encode("utf-8")
