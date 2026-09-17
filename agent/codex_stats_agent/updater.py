@@ -10,6 +10,7 @@ import urllib.request
 from pathlib import Path
 
 from common.releases import PROTOCOL, asset_url, check_file, download, verify, version
+from common.maintenance import UPDATE_IDLE_SECONDS
 from . import __version__
 from .config import APP_DIR, DEFAULT_CONFIG_PATH, AgentConfig, create_config
 
@@ -290,7 +291,7 @@ def legacy_upgrade(stage: Path) -> int:
                     "version": installed, "protocol": PROTOCOL, "busy": busy, "queued": queued,
                     "begin_update": manifest["version"]}
             reply = rpc(config, "/api/v1/agent/checkin", data)
-            if (idle_since and now - idle_since >= 300 and reply.get("lease_until", 0) > now):
+            if (idle_since and now - idle_since >= UPDATE_IDLE_SECONDS and reply.get("lease_until", 0) > now):
                 logs = log_fingerprint(watcher.codex_home)
                 # This one-time step is necessary because 0.3 has no graceful update command.
                 # Only our idle legacy collector is stopped; never Codex itself.

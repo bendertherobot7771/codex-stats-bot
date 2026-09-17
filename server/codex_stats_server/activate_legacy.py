@@ -9,6 +9,7 @@ import urllib.request
 from pathlib import Path
 
 from common.releases import verify
+from common.maintenance import UPDATE_IDLE_SECONDS
 from .database import StatsDatabase
 from .lifecycle import Lifecycle
 from .telegram_bot import TelegramBot
@@ -35,7 +36,7 @@ def idle_proofs(events: list[dict], now: float) -> bool:
             continue  # Offline protocol-1 collectors remain compatible after this additive upgrade.
         seen, proof = proofs.get(machine, (0, {}))
         if (seen < now - 45 or work.get(machine,0) > seen or proof.get("busy", True) or proof.get("queued", 1)
-                or proof.get("idle_since") is None or now - proof["idle_since"] < 300):
+                or proof.get("idle_since") is None or now - proof["idle_since"] < UPDATE_IDLE_SECONDS):
             return False
     return True
 

@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 from common.releases import PROTOCOL, verify, version
+from common.maintenance import UPDATE_IDLE_SECONDS
 from . import __version__
 
 
@@ -51,7 +52,7 @@ class Lifecycle:
         if not self.public_url:
             return "Адрес сервера ещё не настроен (CODEX_STATS_PUBLIC_URL)."
         code = self.code(admin)
-        script = "https://raw.githubusercontent.com/bendertherobot7771/codex-stats-bot/v0.4.2/agent/bootstrap.ps1"
+        script = "https://raw.githubusercontent.com/bendertherobot7771/codex-stats-bot/v0.4.3/agent/bootstrap.ps1"
         return ("Подключение Windows-ПК\n\nКод (одноразовый, действует 15 минут):\n" + code +
                 "\n\nОткройте PowerShell от обычного пользователя и вставьте команду целиком:\n\n" +
                 "$p = Join-Path $env:TEMP ('codex-stats-install-' + [guid]::NewGuid() + '.ps1'); " +
@@ -130,7 +131,7 @@ class Lifecycle:
                     state.update(phase="waiting", warning_at=None)
                     self.save(state)
             device = next(d for d in self.devices() if d["machine_id"] == machine)
-            ready = not busy and not queued and device["idle_since"] is not None and now - device["idle_since"] >= 300
+            ready = not busy and not queued and device["idle_since"] is not None and now - device["idle_since"] >= UPDATE_IDLE_SECONDS
             response = {"server_version": __version__, "phase": state.get("phase", "idle"), "update": None}
             if state.get("phase") == "clients" and ready and version(client_version) < version(state["version"]):
                 response["update"] = state["envelope"]
@@ -164,7 +165,7 @@ class Lifecycle:
                 if device["protocol"] != PROTOCOL:
                     return False, "Несовместимый недоступный ПК: " + device["machine_name"]
                 continue
-            if device["busy"] or device["queued"] or device["idle_since"] is None or now - device["idle_since"] < 300:
+            if device["busy"] or device["queued"] or device["idle_since"] is None or now - device["idle_since"] < UPDATE_IDLE_SECONDS:
                 return False, "Ожидается простой: " + device["machine_name"]
         # Legacy agents cannot acknowledge idleness while they are sending task activity.
         for task in self.db.active_tasks():

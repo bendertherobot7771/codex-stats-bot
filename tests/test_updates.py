@@ -123,21 +123,21 @@ class LifecycleTests(unittest.TestCase):
         self.checkin(busy=True)
         self.assertEqual(self.life.control({'operation':'claim'})['phase'], 'waiting')
         self.checkin()
-        self.now.return_value = 1299
+        self.now.return_value = 1119
         self.checkin()
         self.assertEqual(self.life.control({'operation':'claim'})['phase'], 'waiting')
-        self.now.return_value = 1300
+        self.now.return_value = 1120
         self.checkin()
         self.assertEqual(self.life.control({'operation':'claim'})['phase'], 'warning')
         self.assertEqual(len(self.notices),1)
-        self.now.return_value = 1330
+        self.now.return_value = 1150
         self.checkin(busy=True)
         self.assertEqual(self.life.state()['phase'], 'waiting')
         self.checkin()
-        self.now.return_value = 1630
+        self.now.return_value = 1270
         self.checkin()
         self.life.control({'operation':'claim'})
-        self.now.return_value = 1691
+        self.now.return_value = 1331
         self.checkin()
         self.assertEqual(self.life.control({'operation':'claim'})['phase'], 'server')
         self.assertTrue(self.life.blocked())
@@ -147,7 +147,7 @@ class LifecycleTests(unittest.TestCase):
     def test_notification_failure_blocks_update(self):
         self.offer()
         self.checkin()
-        self.now.return_value = 1301
+        self.now.return_value = 1121
         self.checkin()
         self.life.announce = lambda text: (_ for _ in ()).throw(RuntimeError('Telegram unavailable'))
         with self.assertRaises(RuntimeError):
@@ -158,13 +158,13 @@ class LifecycleTests(unittest.TestCase):
         self.offer()
         state = self.life.state(); state['phase']='clients'; self.life.save(state)
         self.checkin()
-        self.now.return_value = 1301
+        self.now.return_value = 1121
         reply = self.checkin(begin_update='0.4.1')
         self.assertNotIn('lease_until',reply)
-        self.now.return_value = 1360
+        self.now.return_value = 1180
         self.assertNotIn('lease_until',self.checkin(begin_update='0.4.1'))
-        self.now.return_value = 1362
-        self.assertGreater(self.checkin(begin_update='0.4.1')['lease_until'],1362)
+        self.now.return_value = 1182
+        self.assertGreater(self.checkin(begin_update='0.4.1')['lease_until'],1182)
         self.checkin(busy=True)
         self.assertNotIn('lease_until',self.checkin(begin_update='0.4.1'))
 
@@ -174,11 +174,26 @@ class LifecycleTests(unittest.TestCase):
         self.checkin(queued=1)
         self.assertFalse(self.life.ready()[0])
 
+    def test_client_idle_boundary_is_120_seconds_plus_60_second_warning(self):
+        self.offer()
+        state = self.life.state(); state['phase'] = 'clients'; self.life.save(state)
+        self.checkin()
+        self.now.return_value = 1119
+        self.assertNotIn('lease_until', self.checkin(begin_update='0.4.1'))
+        self.assertEqual(self.notices, [])
+        self.now.return_value = 1120
+        self.assertNotIn('lease_until', self.checkin(begin_update='0.4.1'))
+        self.assertEqual(len(self.notices), 1)
+        self.now.return_value = 1179
+        self.assertNotIn('lease_until', self.checkin(begin_update='0.4.1'))
+        self.now.return_value = 1180
+        self.assertGreater(self.checkin(begin_update='0.4.1')['lease_until'], 1180)
+
     def test_new_task_event_revokes_idle_without_waiting_for_checkin(self):
         self.offer(); self.checkin()
-        self.now.return_value=1301; self.checkin()
+        self.now.return_value=1121; self.checkin()
         self.life.control({'operation':'claim'})
-        self.life.on_event({'event_type':'task_started','machine_id':'pc','sent_at':1301})
+        self.life.on_event({'event_type':'task_started','machine_id':'pc','sent_at':1121})
         self.assertEqual(self.life.state()['phase'],'waiting')
         self.assertFalse(self.life.ready()[0])
 
