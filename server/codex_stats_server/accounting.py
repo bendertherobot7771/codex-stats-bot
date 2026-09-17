@@ -82,7 +82,8 @@ def ledger(tasks: list[dict], events: list[dict]) -> dict:
                 samples[account][stamp] = point
             if label in ("start", "end"):
                 boundaries[tid][label] = (stamp, reset, used)
-    entries, windows, current = [], {}, {}
+    entries, windows, current, adjustments = [], {}, {}, []
+    task_machines = {str(t['task_id']): str(t['machine_id']) for t in tasks}
     for account, points in samples.items():
         has_direct = any(point[2] for point in points.values())
         ordered = [(stamp, point) for stamp, point in sorted(points.items()) if point[2] or not has_direct]
@@ -114,15 +115,44 @@ def ledger(tasks: list[dict], events: list[dict]) -> dict:
                 if pending is None:
                     pending = (right, reset, used)
                     continue
-                # Two fresh lower readings confirm an unscheduled reset. A single
-                # lagging response from another PC must not reset everybody's counter.
+                # Confirm a coherent lower baseline; a further drop needs its own
+                # confirmation instead of silently compounding corrections.
                 stamp, _, baseline = pending
-                windows[current[account]]["ended_at"] = stamp
-                epoch = (account, stamp)
-                windows[epoch] = {"account": account, "reset_at": reset, "started_at": stamp,
-                                  "ended_at": None, "baseline": min(baseline, used)}
-                current[account], spent = epoch, 0.0
-                previous = (stamp, reset, min(baseline, used))
+                if used < baseline:
+                    pending = (right, reset, used)
+                    continue
+                if baseline == 0:
+                    windows[current[account]]["ended_at"] = stamp
+                    epoch = (account, stamp)
+                    windows[epoch] = {"account": account, "reset_at": reset, "started_at": stamp,
+                                      "ended_at": None, "baseline": 0.0}
+                    current[account], spent = epoch, 0.0
+                else:
+                    factor = baseline / previous[2]
+                    selected = [e for e in entries if e['epoch'] == epoch]
+                    weights = {}
+                    for i, entry in enumerate(selected):
+                        for machine, amount in entry['machines'].items():
+                            if amount > 0:
+                                weights[(i, machine)] = amount
+                        if entry['unallocated'] > 0:
+                            weights[(i, '')] = entry['unallocated']
+                    scaled = split_percent(round(spent * factor, 2), weights) if weights else {}
+                    for i, entry in enumerate(selected):
+                        for machine in entry['machines']:
+                            share = scaled.get((i, machine), 0.0)
+                            entry['machines'][machine] = share
+                            matching = {tid: amount for tid, amount in entry['tasks'].items()
+                                        if task_machines.get(tid) == machine and amount > 0}
+                            if matching:
+                                entry['tasks'].update(split_percent(share, matching))
+                        entry['unallocated'] = scaled.get((i, ''), 0.0)
+                        entry['percent'] = round(sum(entry['machines'].values()) + entry['unallocated'], 2)
+                    spent = round(sum(e['percent'] for e in selected), 2)
+                    adjustments.append({'account': account, 'epoch': epoch, 'at': stamp,
+                                        'confirmed_at': right, 'before_used': previous[2],
+                                        'after_used': baseline, 'factor': factor})
+                previous = (stamp, reset, baseline)
                 pending = None
             else:
                 pending = None
@@ -169,7 +199,8 @@ def ledger(tasks: list[dict], events: list[dict]) -> dict:
     for account, (_, info) in credits.items():
         metadata.setdefault(account, {}).update(info)
     return {"entries": entries, "windows": windows, "current": current,
-            "metadata": metadata, "boundaries": dict(boundaries), "activity": activity}
+            "metadata": metadata, "boundaries": dict(boundaries), "activity": activity,
+            "adjustments": adjustments}
 
 
 def payload(tasks: list[dict], entries: list[dict]) -> dict:

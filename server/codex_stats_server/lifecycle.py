@@ -56,7 +56,7 @@ class Lifecycle:
             setting = "CODEX_STATS_LOCAL_URL" if local else "CODEX_STATS_PUBLIC_URL"
             return f"Адрес сервера ещё не настроен ({setting}). Обратитесь к администратору."
         code = self.code(admin)
-        script = "https://raw.githubusercontent.com/bendertherobot7771/codex-stats-bot/v0.4.8/agent/bootstrap.ps1"
+        script = "https://raw.githubusercontent.com/bendertherobot7771/codex-stats-bot/v0.4.9/agent/bootstrap.ps1"
         quoted_url = url.replace("'", "''")
         return ("Установка Windows-агента · " + ("локальная сеть сервера" if local else "интернет (глобальная сеть)") +
                 "\nАдрес сервера: " + url +

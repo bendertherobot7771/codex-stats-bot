@@ -10,7 +10,7 @@ import urllib.request
 from typing import Any
 
 from .database import StatsDatabase
-from .reports import telegram_active, telegram_last, telegram_week, telegram_weeks
+from .reports import context, percent, quota_suffix, telegram_active, telegram_last, telegram_week, telegram_weeks
 
 
 LOGGER = logging.getLogger("codex_stats_telegram")
@@ -35,6 +35,46 @@ class TelegramBot:
         self.outgoing: queue.Queue[tuple[str, dict[str, Any]]] = queue.Queue()
         self.running = True
         self.thread = threading.Thread(target=self._run, name="telegram-bot", daemon=True)
+        # Historical recalculation on first upgrade must not announce old bonuses.
+        with database._lock:
+            if not database.get_setting('quota_notices_initialized'):
+                self.notify_quota_adjustments(historical=True)
+                database.set_setting('quota_notices_initialized', '1')
+
+    def notify_quota_adjustments(self, historical: bool = False) -> None:
+        with self.database._lock:
+            _, book = context(self.database)
+            notices = json.loads(self.database.get_setting('quota_notices', '{}'))
+            for adjustment in book['adjustments']:
+                key = hashlib.sha256(f"{adjustment['account']}:{adjustment['at']}".encode()).hexdigest()
+                if key in notices:
+                    continue
+                before = 100 - adjustment['before_used']
+                after = 100 - adjustment['after_used']
+                text = (f'Обнаружено увеличение доступного недельного лимита: {percent(before)} → {percent(after)}.\n'
+                        'Похоже, нам подарены дополнительные мощности! Причину изменения OpenAI явно не сообщает.\n'
+                        'Траты по компьютерам и «Траты без системы учета» пересчитаны пропорционально.\n' +
+                        quota_suffix(book['metadata'].get(adjustment['account'], {})))
+                notices[key] = {'text': text, 'pending': [] if historical else
+                                [u['chat_id'] for u in self.database.bot_users()]}
+            self.database.set_setting('quota_notices', json.dumps(notices, ensure_ascii=False))
+
+    def _flush_quota_notices(self) -> None:
+        with self.database._lock:
+            snapshot = json.loads(self.database.get_setting('quota_notices', '{}'))
+        for key, notice in snapshot.items():
+            for chat_id in notice['pending']:
+                if self.database.bot_user(chat_id):
+                    try:
+                        self._request('sendMessage', {'chat_id': chat_id, 'text': notice['text']})
+                    except Exception:
+                        # Retry later without blocking delivery to other members.
+                        continue
+                with self.database._lock:
+                    notices = json.loads(self.database.get_setting('quota_notices', '{}'))
+                    if chat_id in notices[key]['pending']:
+                        notices[key]['pending'].remove(chat_id)
+                    self.database.set_setting('quota_notices', json.dumps(notices, ensure_ascii=False))
 
     def start(self) -> None:
         self.thread.start()
@@ -90,6 +130,7 @@ class TelegramBot:
             LOGGER.warning("Не удалось обновить меню команд Telegram: %s", error)
         while self.running:
             self._flush_outgoing()
+            self._flush_quota_notices()
             try:
                 updates = self._request(
                     "getUpdates",

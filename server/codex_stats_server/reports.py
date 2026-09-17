@@ -46,6 +46,7 @@ def stats_payload(database: StatsDatabase, days: int = 7) -> dict[str, Any]:
     result.update(days=days, generated_at=time.time(), active_tasks=sum(t["status"] == "active" for t in tasks))
     # Explicit history can exceed 100 across resets; current counters cannot.
     result["history_observed_percent"] = sum(e["percent"] for e in book["entries"] if e["at"] >= since)
+    result['quota_adjustments'] = book['adjustments']
     return result
 
 
@@ -61,6 +62,7 @@ def weekly_windows(database: StatsDatabase) -> list[dict[str, Any]]:
         result["label"] = (datetime.fromtimestamp(window["started_at"]).strftime("%d.%m.%Y %H:%M") +
                            " → сброс " + datetime.fromtimestamp(window["reset_at"]).strftime("%d.%m.%Y %H:%M"))
         result["epoch"] = epoch
+        result['quota_adjustments'] = [a for a in book['adjustments'] if a['epoch'] == epoch]
         windows.append(result)
     return windows
 
@@ -105,9 +107,10 @@ def telegram_week(database: StatsDatabase, index: int = 1) -> str:
     for row in window["rows"]:
         marker = "≈" if row["estimated_tasks"] else ""
         lines.append(f"• {row['machine_name']}: {marker}{percent(row['weekly_percent'])}")
+    lines.append(f"• Траты без системы учета: {percent(window['unallocated_percent'])}")
     lines.append(f"Всего: {percent(window['observed_weekly_percent'])}")
-    if window["unallocated_percent"]:
-        lines.append(f"Без достоверного интервала: {percent(window['unallocated_percent'])}")
+    if window['quota_adjustments']:
+        lines.append(f"Учтены увеличения доступной квоты: {len(window['quota_adjustments'])}. Расход пересчитан пропорционально.")
     if any(row["estimated_tasks"] for row in window["rows"]):
         lines.append("≈ — расход пересечений распределён между ПК оценочно")
     lines.append(status_footer(database))
@@ -150,6 +153,8 @@ def task_completed_message(task: dict[str, Any], database: StatsDatabase) -> str
     crossed = start and end and any(start[0] < w["started_at"] <= end[0] for w in book["windows"].values() if w["account"] == account)
     if start and end:
         change = percent(end[2] - start[2]) if not crossed and end[2] >= start[2] else "сброс/смена окна"
+        if not crossed and any(a['account'] == account and start[0] < a['at'] <= end[0] for a in book['adjustments']):
+            change = 'увеличение доступной квоты; расход пересчитан'
     credit_text = ("≈" if estimated else "") + percent(credited) if start and end else "нет замера"
     lines = [f"{task['machine_name']} · {percent(week_total)} за неделю · {quota_suffix(quota)}",
              f"До задания: {before} >>> После задания: {after}",

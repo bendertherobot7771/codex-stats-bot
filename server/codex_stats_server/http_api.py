@@ -25,8 +25,9 @@ def create_server(
     api_key: str,
     completion_notifier: Callable[[str, str], None] | None = None,
     lifecycle=None,
+    event_notifier: Callable[[], None] | None = None,
 ) -> ThreadingHTTPServer:
-    handler = _handler_factory(database, api_key, completion_notifier, lifecycle)
+    handler = _handler_factory(database, api_key, completion_notifier, lifecycle, event_notifier)
     return ThreadingHTTPServer((host, port), handler)
 
 
@@ -35,9 +36,10 @@ def _handler_factory(
     api_key: str,
     completion_notifier: Callable[[str, str], None] | None,
     lifecycle=None,
+    event_notifier: Callable[[], None] | None = None,
 ) -> type[BaseHTTPRequestHandler]:
     class Handler(BaseHTTPRequestHandler):
-        server_version = "CodexStats/0.4.8"
+        server_version = "CodexStats/0.4.9"
 
         def setup(self) -> None:
             super().setup()
@@ -118,6 +120,8 @@ def _handler_factory(
             except (OSError, RuntimeError, KeyError):
                 self._json(503, {"error": "temporarily_unavailable"})
                 return
+            if event_notifier:
+                event_notifier()
             if inserted and event.get("event_type") == "task_completed" and completion_notifier:
                 task = next(
                     (row for row in database.accounting_data()[0] if row["task_id"] == event["task_id"]),

@@ -42,7 +42,8 @@ def main() -> int:
         lifecycle.announce = unavailable_notice
 
     notifier = bot.notify_completion if bot and config.notify_completions else None
-    server = create_server(config.host, config.port, database, config.agent_api_key, notifier, lifecycle)
+    server = create_server(config.host, config.port, database, config.agent_api_key, notifier, lifecycle,
+                           event_notifier=bot.notify_quota_adjustments if bot else None)
 
     def stop(*_: object) -> None:
         threading.Thread(target=server.shutdown, name="http-shutdown", daemon=True).start()
