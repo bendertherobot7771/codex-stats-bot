@@ -46,6 +46,10 @@ class TelegramBot:
         for chat_id in self.database.notification_chats():
             self._send(chat_id, text)
 
+    def notify_all(self, text: str) -> None:
+        for user in self.database.bot_users():
+            self._send(user['chat_id'], text)
+
     def report_preferences(self, chat_id: int) -> dict:
         return json.loads(self.database.get_setting(f"reports:{chat_id}", '{"mode":"all","machines":[]}'))
 

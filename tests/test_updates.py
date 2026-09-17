@@ -219,7 +219,7 @@ class LifecycleTests(unittest.TestCase):
             command = next(line for line in text.splitlines() if line.startswith('$p ='))
             self.assertIn("-ServerUrl 'http://192.168.1.2:8765'", command)
             self.assertIn('-ErrorAction Stop;', command)
-            self.assertIn('/v0.4.7/agent/bootstrap.ps1', command)
+            self.assertIn('/v0.4.8/agent/bootstrap.ps1', command)
             code = command.split(" -Code '")[1].split("'")[0]
             self.assertNotIn(code, codes)
             codes.add(code)

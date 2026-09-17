@@ -75,3 +75,12 @@ class ReportPreferencesTests(unittest.TestCase):
         self.bot._request = lambda method, data: calls.append(data['chat_id'])
         self.bot.announce_maintenance('maintenance')
         self.assertEqual(sorted(calls), [1, 2])
+
+    def test_server_updated_broadcast_ignores_personal_filter(self):
+        self.callback(2, 'reports:mine')
+        self.db.disable_bot_user(3)
+        self.bot.notify_all('Серверная часть обновлена. Ждите обновления клиентов.')
+        chats = []
+        while not self.bot.outgoing.empty():
+            chats.append(self.bot.outgoing.get_nowait()[1]['chat_id'])
+        self.assertEqual(sorted(chats), [1, 2])

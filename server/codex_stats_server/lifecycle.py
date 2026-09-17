@@ -20,6 +20,7 @@ class Lifecycle:
         self.db, self.public_url, self.cache = database, public_url.rstrip("/"), cache
         self.local_url = local_url.rstrip("/")
         self.announce = announce or (lambda text: None)
+        self.notify_updated = self.announce
         self.enrollment_attempts = {}
         with self.db._lock, self.db._connection as connection:
             connection.executescript("""
@@ -55,7 +56,7 @@ class Lifecycle:
             setting = "CODEX_STATS_LOCAL_URL" if local else "CODEX_STATS_PUBLIC_URL"
             return f"Адрес сервера ещё не настроен ({setting}). Обратитесь к администратору."
         code = self.code(admin)
-        script = "https://raw.githubusercontent.com/bendertherobot7771/codex-stats-bot/v0.4.7/agent/bootstrap.ps1"
+        script = "https://raw.githubusercontent.com/bendertherobot7771/codex-stats-bot/v0.4.8/agent/bootstrap.ps1"
         quoted_url = url.replace("'", "''")
         return ("Установка Windows-агента · " + ("локальная сеть сервера" if local else "интернет (глобальная сеть)") +
                 "\nАдрес сервера: " + url +
@@ -224,8 +225,9 @@ class Lifecycle:
             elif operation == "finish":
                 state.update(phase="clients")
                 self.save(state)
-                self.announce(f"Сервер обновлён до {__version__}. Приём статистики возобновлён.\n"
-                              "Windows-агенты обновятся при собственном простое; активные задания не прерываются.")
+                self.notify_updated(f"Серверная часть обновлена до {__version__}. Приём статистики возобновлён.\n"
+                              "Ждите обновления клиентов: каждый ПК обновится автоматически в простое. "
+                              "Активные задания не прерываются. О завершении обновления клиента придёт отдельное сообщение.")
             elif operation == "failure":
                 state.update(phase="failed", reason=str(data.get("reason", "Ошибка обновления"))[:200])
                 self.save(state)

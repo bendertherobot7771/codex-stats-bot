@@ -35,6 +35,7 @@ def main() -> int:
         )
         bot.start()
         lifecycle.announce = bot.announce_maintenance
+        lifecycle.notify_updated = bot.notify_all
     else:
         def unavailable_notice(text):
             raise RuntimeError("Telegram must be configured for automatic maintenance")
