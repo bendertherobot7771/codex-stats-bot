@@ -105,9 +105,11 @@ class TelegramBot:
             response, markup = telegram_last(self.database), None
         elif command == "/users" and user["role"] == "admin":
             response, markup = self._users_message()
-        elif command == "/install" or (command == "/addpc" and user["role"] == "admin"):
+        elif command in ("/install", "/install_local") or (command == "/addpc" and user["role"] == "admin"):
             markup = None
             arguments = text.split()[1:]
+            if command == "/install_local" and not arguments:
+                arguments = ["local"]
             if chat_id < 0 or chat.get("type", "private") != "private":
                 response = "Для получения личного кода установки напишите /install боту в личные сообщения."
             elif arguments not in ([], ["local"]):
@@ -258,7 +260,7 @@ def _help(role: str) -> str:
         "/whoami — показать Telegram chat ID",
         "/updates — версии ПК и состояние автообновления",
         "/install — код и установка Windows-ПК через интернет",
-        "/install local — установка ПК в домашней сети сервера",
+        "/install_local — установка ПК в локальной сети сервера (также /install local)",
     ]
     if role == "admin":
         lines.extend(
@@ -278,7 +280,8 @@ def _telegram_commands() -> list[dict[str, str]]:
         {"command": "weeks", "description": "вся недельная история"},
         {"command": "active", "description": "активные задания"},
         {"command": "last", "description": "последние задания"},
-        {"command": "install", "description": "установить агент: код и команда для Windows"},
+        {"command": "install", "description": "Установить агент — интернет (глобальная сеть)"},
+        {"command": "install_local", "description": "Установить агент — локальная сеть"},
         {"command": "users", "description": "управление участниками (админ)"},
         {"command": "addpc", "description": "подключить Windows-ПК (админ)"},
         {"command": "updates", "description": "версии и автообновление"},

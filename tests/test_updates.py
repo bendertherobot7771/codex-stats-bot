@@ -123,21 +123,21 @@ class LifecycleTests(unittest.TestCase):
         self.checkin(busy=True)
         self.assertEqual(self.life.control({'operation':'claim'})['phase'], 'waiting')
         self.checkin()
-        self.now.return_value = 1119
+        self.now.return_value = 1059
         self.checkin()
         self.assertEqual(self.life.control({'operation':'claim'})['phase'], 'waiting')
-        self.now.return_value = 1120
+        self.now.return_value = 1060
         self.checkin()
         self.assertEqual(self.life.control({'operation':'claim'})['phase'], 'warning')
         self.assertEqual(len(self.notices),1)
-        self.now.return_value = 1150
+        self.now.return_value = 1090
         self.checkin(busy=True)
         self.assertEqual(self.life.state()['phase'], 'waiting')
         self.checkin()
-        self.now.return_value = 1270
+        self.now.return_value = 1150
         self.checkin()
         self.life.control({'operation':'claim'})
-        self.now.return_value = 1331
+        self.now.return_value = 1211
         self.checkin()
         self.assertEqual(self.life.control({'operation':'claim'})['phase'], 'server')
         self.assertTrue(self.life.blocked())
@@ -174,20 +174,20 @@ class LifecycleTests(unittest.TestCase):
         self.checkin(queued=1)
         self.assertFalse(self.life.ready()[0])
 
-    def test_client_idle_boundary_is_120_seconds_plus_60_second_warning(self):
+    def test_client_idle_boundary_is_60_seconds_plus_60_second_warning(self):
         self.offer()
         state = self.life.state(); state['phase'] = 'clients'; self.life.save(state)
         self.checkin()
-        self.now.return_value = 1119
+        self.now.return_value = 1059
         self.assertNotIn('lease_until', self.checkin(begin_update='0.4.1'))
         self.assertEqual(self.notices, [])
-        self.now.return_value = 1120
+        self.now.return_value = 1060
         self.assertNotIn('lease_until', self.checkin(begin_update='0.4.1'))
         self.assertEqual(len(self.notices), 1)
-        self.now.return_value = 1179
+        self.now.return_value = 1119
         self.assertNotIn('lease_until', self.checkin(begin_update='0.4.1'))
-        self.now.return_value = 1180
-        self.assertGreater(self.checkin(begin_update='0.4.1')['lease_until'], 1180)
+        self.now.return_value = 1120
+        self.assertGreater(self.checkin(begin_update='0.4.1')['lease_until'], 1120)
 
     def test_new_task_event_revokes_idle_without_waiting_for_checkin(self):
         self.offer(); self.checkin()
@@ -219,7 +219,7 @@ class LifecycleTests(unittest.TestCase):
             command = next(line for line in text.splitlines() if line.startswith('$p ='))
             self.assertIn("-ServerUrl 'http://192.168.1.2:8765'", command)
             self.assertIn('-ErrorAction Stop;', command)
-            self.assertIn('/v0.4.5/agent/bootstrap.ps1', command)
+            self.assertIn('/v0.4.6/agent/bootstrap.ps1', command)
             code = command.split(" -Code '")[1].split("'")[0]
             self.assertNotIn(code, codes)
             codes.add(code)
@@ -251,6 +251,21 @@ class LifecycleTests(unittest.TestCase):
         for role in ('admin', 'viewer'):
             self.assertIn('/install local', _help(role))
         self.assertIn('install', [item['command'] for item in _telegram_commands()])
+        self.assertIn('install_local', [item['command'] for item in _telegram_commands()])
+
+    def test_local_menu_command_for_viewer(self):
+        bot = TelegramBot('test', {1}, {2}, self.db, self.life)
+        self.life.local_url = 'http://192.168.32.125:8765'
+        self.life.public_url = 'https://example.com:28443'
+        for command, address, heading in (
+            ('/install_local', self.life.local_url, 'локальная сеть сервера'),
+            ('/install_local@codex_stats_bot', self.life.local_url, 'локальная сеть сервера'),
+            ('/install', self.life.public_url, 'интернет (глобальная сеть)'),
+        ):
+            bot._handle_update({'message': {'chat': {'id': 2, 'type': 'private'}, 'text': command}})
+            text = bot.outgoing.get_nowait()[1]['text']
+            self.assertIn(heading, text.splitlines()[0])
+            self.assertIn("-ServerUrl '" + address + "'", text)
 
 
 class WindowsRollbackTests(unittest.TestCase):

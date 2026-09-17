@@ -55,9 +55,10 @@ class Lifecycle:
             setting = "CODEX_STATS_LOCAL_URL" if local else "CODEX_STATS_PUBLIC_URL"
             return f"Адрес сервера ещё не настроен ({setting}). Обратитесь к администратору."
         code = self.code(admin)
-        script = "https://raw.githubusercontent.com/bendertherobot7771/codex-stats-bot/v0.4.5/agent/bootstrap.ps1"
+        script = "https://raw.githubusercontent.com/bendertherobot7771/codex-stats-bot/v0.4.6/agent/bootstrap.ps1"
         quoted_url = url.replace("'", "''")
-        return ("Подключение Windows-ПК · " + ("домашняя сеть" if local else "интернет") +
+        return ("Установка Windows-агента · " + ("локальная сеть сервера" if local else "интернет (глобальная сеть)") +
+                "\nАдрес сервера: " + url +
                 "\n\n1. На новом ПК с Windows x64 войдите в Codex под нужным аккаунтом.\n"
                 "2. Откройте Windows PowerShell от обычного пользователя (не администратора).\n"
                 "3. Скопируйте следующую строку целиком и нажмите Enter:\n\n" +
@@ -71,7 +72,7 @@ class Lifecycle:
                 "ExecutionPolicy Bypass действует только для процесса установки; постоянные настройки защиты не меняются.\n\n" +
                 "Дождитесь успешного завершения установки, затем начните новое задание Codex. Проверьте ПК через /updates, расход — через /stats. " +
                 "Уже установленный агент переустанавливать не нужно: он обновляется автоматически.\n\n" +
-                "/install — подключение через интернет; /install local — только домашняя сеть сервера. " +
+                "/install — подключение через интернет; /install_local — только локальная сеть сервера (также /install local). " +
                 "Если код истёк, запросите команду заново. " +
                 "Не пересылайте код посторонним.")
 
