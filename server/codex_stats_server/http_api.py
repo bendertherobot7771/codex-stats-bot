@@ -23,7 +23,7 @@ def create_server(
     port: int,
     database: StatsDatabase,
     api_key: str,
-    completion_notifier: Callable[[str], None] | None = None,
+    completion_notifier: Callable[[str, str], None] | None = None,
     lifecycle=None,
 ) -> ThreadingHTTPServer:
     handler = _handler_factory(database, api_key, completion_notifier, lifecycle)
@@ -33,11 +33,11 @@ def create_server(
 def _handler_factory(
     database: StatsDatabase,
     api_key: str,
-    completion_notifier: Callable[[str], None] | None,
+    completion_notifier: Callable[[str, str], None] | None,
     lifecycle=None,
 ) -> type[BaseHTTPRequestHandler]:
     class Handler(BaseHTTPRequestHandler):
-        server_version = "CodexStats/0.4.6"
+        server_version = "CodexStats/0.4.7"
 
         def setup(self) -> None:
             super().setup()
@@ -124,7 +124,7 @@ def _handler_factory(
                     None,
                 )
                 if task:
-                    completion_notifier(task_completed_message(task, database))
+                    completion_notifier(task_completed_message(task, database), str(task['machine_id']))
             self._json(202, {"accepted": True, "duplicate": not inserted})
 
         def _public_request(self) -> bool:

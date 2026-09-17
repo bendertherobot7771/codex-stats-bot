@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 import queue
 import threading
@@ -44,6 +45,38 @@ class TelegramBot:
     def notify_registered(self, text: str) -> None:
         for chat_id in self.database.notification_chats():
             self._send(chat_id, text)
+
+    def report_preferences(self, chat_id: int) -> dict:
+        return json.loads(self.database.get_setting(f"reports:{chat_id}", '{"mode":"all","machines":[]}'))
+
+    def notify_completion(self, text: str, machine_id: str) -> None:
+        for user in self.database.bot_users():
+            chat_id = user['chat_id']
+            preferences = self.report_preferences(chat_id)
+            if preferences['mode'] == 'all' or machine_id in preferences['machines']:
+                self._send(chat_id, text)
+
+    def _reports_message(self, chat_id: int):
+        preferences = self.report_preferences(chat_id)
+        machines = {row['machine_id']: row['machine_name'] for row in self.database.accounting_data()[0]}
+        if self.lifecycle:
+            machines.update({row['machine_id']: row['machine_name'] for row in self.lifecycle.devices()})
+        text = ('Автоматические отчёты: ' + ('все задания всех участников' if preferences['mode'] == 'all'
+                else 'только задания выбранных ПК') + '.\n'
+                'Общая статистика /stats и /weeks остаётся доступна в обоих режимах.\n'
+                'Для режима «Только мои» отметьте свои компьютеры ниже. Если ПК общий, его задания не различаются по людям.')
+        if preferences['mode'] == 'mine' and not preferences['machines']:
+            text += '\n⚠ ПК не выбраны: отчёты о заданиях приходить не будут.'
+        buttons = [[{'text': 'Все задания', 'callback_data': 'reports:all'},
+                    {'text': 'Только мои', 'callback_data': 'reports:mine'}]]
+        # Stable short keys keep old keyboards correct and fit the 64-byte limit.
+        ids = sorted(machines)
+        choices = {hashlib.sha256(machine.encode()).hexdigest()[:24]: machine for machine in ids}
+        self.database.set_setting(f'report_choices:{chat_id}', json.dumps(choices))
+        for key, machine in choices.items():
+            mark = '✓ ' if machine in preferences['machines'] else '○ '
+            buttons.append([{'text': mark + machines[machine], 'callback_data': f'reports:pc:{key}'}])
+        return text, {'inline_keyboard': buttons}
 
     def _run(self) -> None:
         offset = int(self.database.get_setting("telegram_offset", "0") or 0)
@@ -95,6 +128,8 @@ class TelegramBot:
             response, markup = "Уведомления Codex Stats включены.\n" + _help(user["role"]), None
         elif command == "/stats":
             response, markup = telegram_week(self.database), None
+        elif command == "/reports":
+            response, markup = self._reports_message(chat_id)
         elif command == "/weeks":
             response, markup = telegram_weeks(self.database, _integer_argument(text, 1))
         elif command == "/week":
@@ -138,7 +173,22 @@ class TelegramBot:
         if not user:
             self.outgoing.put(("answerCallbackQuery", {"callback_query_id": callback_id, "text": "Нет доступа"}))
             return
-        if data.startswith("week:"):
+        if data.startswith('reports:'):
+            preferences = self.report_preferences(chat_id)
+            if data in ('reports:all', 'reports:mine'):
+                preferences['mode'] = data.split(':')[1]
+            elif data.startswith('reports:pc:'):
+                choices = json.loads(self.database.get_setting(f'report_choices:{chat_id}', '{}'))
+                machine = choices.get(data.split(':')[-1])
+                if machine:
+                    if machine in preferences['machines']:
+                        preferences['machines'].remove(machine)
+                    else:
+                        preferences['machines'].append(machine)
+            self.database.set_setting(f'reports:{chat_id}', json.dumps(preferences))
+            text, markup = self._reports_message(chat_id)
+            self._edit_or_send(message, chat_id, text, markup)
+        elif data.startswith("week:"):
             index = _safe_int(data.removeprefix("week:"), 1)
             markup = {"inline_keyboard": [[{"text": "← К списку", "callback_data": "weeks:1"}]]}
             self._edit_or_send(message, chat_id, telegram_week(self.database, index), markup)
@@ -259,6 +309,7 @@ def _help(role: str) -> str:
         "/last — последние задания",
         "/whoami — показать Telegram chat ID",
         "/updates — версии ПК и состояние автообновления",
+        "/reports — уведомления: все задания или только мои ПК",
         "/install — код и установка Windows-ПК через интернет",
         "/install_local — установка ПК в локальной сети сервера (также /install local)",
     ]
@@ -277,6 +328,7 @@ def _help(role: str) -> str:
 def _telegram_commands() -> list[dict[str, str]]:
     return [
         {"command": "stats", "description": "текущая неделя по компьютерам"},
+        {"command": "reports", "description": "Отчёты о заданиях: все или только мои"},
         {"command": "weeks", "description": "вся недельная история"},
         {"command": "active", "description": "активные задания"},
         {"command": "last", "description": "последние задания"},

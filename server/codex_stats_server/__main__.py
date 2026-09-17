@@ -40,7 +40,7 @@ def main() -> int:
             raise RuntimeError("Telegram must be configured for automatic maintenance")
         lifecycle.announce = unavailable_notice
 
-    notifier = bot.notify_registered if bot and config.notify_completions else None
+    notifier = bot.notify_completion if bot and config.notify_completions else None
     server = create_server(config.host, config.port, database, config.agent_api_key, notifier, lifecycle)
 
     def stop(*_: object) -> None:
