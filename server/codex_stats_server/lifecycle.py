@@ -55,7 +55,7 @@ class Lifecycle:
             setting = "CODEX_STATS_LOCAL_URL" if local else "CODEX_STATS_PUBLIC_URL"
             return f"Адрес сервера ещё не настроен ({setting}). Обратитесь к администратору."
         code = self.code(admin)
-        script = "https://raw.githubusercontent.com/bendertherobot7771/codex-stats-bot/v0.4.4/agent/bootstrap.ps1"
+        script = "https://raw.githubusercontent.com/bendertherobot7771/codex-stats-bot/v0.4.5/agent/bootstrap.ps1"
         quoted_url = url.replace("'", "''")
         return ("Подключение Windows-ПК · " + ("домашняя сеть" if local else "интернет") +
                 "\n\n1. На новом ПК с Windows x64 войдите в Codex под нужным аккаунтом.\n"

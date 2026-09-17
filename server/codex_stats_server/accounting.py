@@ -5,6 +5,7 @@ import math
 from collections import defaultdict
 from typing import Any
 
+RESET_TIME_TOLERANCE = 60  # Timestamp jitter is not a new weekly allowance.
 
 def number(value: Any) -> float | None:
     try:
@@ -86,8 +87,29 @@ def ledger(tasks: list[dict], events: list[dict]) -> dict:
         has_direct = any(point[2] for point in points.values())
         ordered = [(stamp, point) for stamp, point in sorted(points.items()) if point[2] or not has_direct]
         previous, epoch, spent, pending = None, None, 0.0, None
+        pending_window = None
         for right, (reset, used, direct) in ordered:
+            if previous is not None and abs(reset - previous[1]) <= RESET_TIME_TOLERANCE:
+                # Compare with the canonical window, not the last raw timestamp:
+                # otherwise successive small shifts could silently drift forever.
+                reset = previous[1]
             changed = previous is None or reset != previous[1]
+            if changed and previous is not None and right < previous[1]:
+                # Before the old deadline, a changed timestamp needs a second
+                # consistent observation. A single outlier must not split history.
+                if pending_window is None or abs(reset - pending_window[1]) > RESET_TIME_TOLERANCE:
+                    pending_window = (right, reset, used)
+                    pending = None
+                    continue
+                stamp, canonical_reset, baseline = pending_window
+                windows[current[account]]["ended_at"] = stamp
+                epoch = (account, stamp)
+                windows[epoch] = {"account": account, "reset_at": canonical_reset,
+                                  "started_at": stamp, "ended_at": None, "baseline": min(baseline, used)}
+                current[account], spent = epoch, 0.0
+                previous = (stamp, canonical_reset, min(baseline, used))
+                reset, changed, pending = canonical_reset, False, None
+            pending_window = None
             if not changed and direct and used < previous[2]:
                 if pending is None:
                     pending = (right, reset, used)

@@ -78,6 +78,44 @@ class AccountingTests(unittest.TestCase):
         self.assertEqual(len(book["windows"]), 2)
         self.assertFalse(book["entries"])
 
+    def test_two_second_reset_jitter_preserves_fifteen_percent(self):
+        events = [observation(100, 26), observation(130, 41),
+                  observation(150, 41, 1000001), observation(180, 41), observation(200, 42)]
+        book = ledger([task('a', 'GamePC')], events)
+        self.assertEqual(len(book['windows']), 1)
+        self.assertEqual(sum(e['percent'] for e in book['entries']), 16)
+        self.assertEqual(sum(e['machines']['GamePC'] for e in book['entries']), 16)
+        self.assertEqual(book, ledger([task('a', 'GamePC')], list(reversed(events)) * 2))
+
+    def test_reset_jitter_keeps_parallel_total_at_100(self):
+        tasks = [task(str(i), str(i)) for i in range(3)]
+        events = [observation(100, 0), observation(150, 50, 1000001), observation(200, 100)]
+        book = ledger(tasks, events)
+        self.assertEqual(len(book['windows']), 1)
+        self.assertEqual(sum(e['percent'] for e in book['entries']), 100)
+        self.assertAlmostEqual(sum(sum(e['machines'].values()) for e in book['entries']), 100)
+
+    def test_large_single_timestamp_outlier_does_not_reset(self):
+        book = ledger([task('a', 'A')], [observation(100, 26), observation(130, 41),
+                      observation(150, 41, 2000000), observation(200, 42)])
+        self.assertEqual(len(book['windows']), 1)
+        self.assertEqual(sum(e['percent'] for e in book['entries']), 16)
+
+    def test_confirmed_early_window_change_and_usage(self):
+        book = ledger([task('a', 'A')], [observation(100, 26), observation(130, 41),
+                      observation(150, 0, 2000000), observation(180, 1, 2000002),
+                      observation(200, 2, 2000000)])
+        self.assertEqual(len(book['windows']), 2)
+        current = book['current']['a']
+        self.assertEqual(current[1], 150)
+        self.assertEqual(sum(e['percent'] for e in book['entries'] if e['epoch'] == current), 2)
+
+    def test_real_reset_with_small_timestamp_jitter_still_detected(self):
+        book = ledger([task('a', 'A')], [observation(100, 0), observation(130, 80),
+                      observation(150, 0, 1000001), observation(180, 0), observation(200, 1)])
+        self.assertEqual(len(book['windows']), 2)
+        self.assertEqual(sum(e['percent'] for e in book['entries']), 81)
+
     def test_gap_is_unallocated_not_charged_to_next_pc(self):
         book = ledger([task("a", "A", 150, 200)], [observation(100, 10), observation(200, 20)])
         self.assertEqual(book["entries"][0]["unallocated"], 10)
