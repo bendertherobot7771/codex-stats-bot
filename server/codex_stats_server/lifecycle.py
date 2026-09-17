@@ -51,7 +51,7 @@ class Lifecycle:
         if not self.public_url:
             return "Адрес сервера ещё не настроен (CODEX_STATS_PUBLIC_URL)."
         code = self.code(admin)
-        script = "https://raw.githubusercontent.com/bendertherobot7771/codex-stats-bot/v0.4.1/agent/bootstrap.ps1"
+        script = "https://raw.githubusercontent.com/bendertherobot7771/codex-stats-bot/v0.4.2/agent/bootstrap.ps1"
         return ("Подключение Windows-ПК\n\nКод (одноразовый, действует 15 минут):\n" + code +
                 "\n\nОткройте PowerShell от обычного пользователя и вставьте команду целиком:\n\n" +
                 "$p = Join-Path $env:TEMP ('codex-stats-install-' + [guid]::NewGuid() + '.ps1'); " +

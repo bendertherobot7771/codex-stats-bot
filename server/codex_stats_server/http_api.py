@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hmac
+import ipaddress
 import json
 import logging
 import time
@@ -36,7 +37,7 @@ def _handler_factory(
     lifecycle=None,
 ) -> type[BaseHTTPRequestHandler]:
     class Handler(BaseHTTPRequestHandler):
-        server_version = "CodexStats/0.4.1"
+        server_version = "CodexStats/0.4.2"
 
         def setup(self) -> None:
             super().setup()
@@ -44,6 +45,12 @@ def _handler_factory(
 
         def do_GET(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
+            if parsed.path == "/api/v1/public-auth":
+                if self.client_address[0] not in ("127.0.0.1", "::1"):
+                    self._json(404, {"error": "not_found"})
+                elif self._authorized(device_only=True):
+                    self._json(200, {"authorized": True})
+                return
             if parsed.path == "/health":
                 self._json(200, {"status": "ok", "time": time.time(), "version": __version__,
                                  "maintenance": bool(lifecycle and lifecycle.blocked())})
@@ -77,7 +84,10 @@ def _handler_factory(
                 if path == "/api/v1/enroll":
                     if lifecycle is None:
                         raise ValueError("Enrollment is not configured")
-                    self._json(200, lifecycle.enroll(event, self.client_address[0]))
+                    peer = self.client_address[0]
+                    if self._public_request():
+                        peer = str(ipaddress.ip_address(self.headers.get("X-Real-IP", "")))
+                    self._json(200, lifecycle.enroll(event, peer))
                     return
                 if path == "/api/v1/agent/checkin":
                     if lifecycle is None:
@@ -117,11 +127,15 @@ def _handler_factory(
                     completion_notifier(task_completed_message(task, database))
             self._json(202, {"accepted": True, "duplicate": not inserted})
 
-        def _authorized(self, admin: bool = False) -> bool:
+        def _public_request(self) -> bool:
+            return self.client_address[0] in ("127.0.0.1", "::1") and self.headers.get("X-Codex-Public") == "1"
+
+        def _authorized(self, admin: bool = False, device_only: bool = False) -> bool:
             expected = f"Bearer {api_key}"
             actual = self.headers.get("Authorization", "")
             self.device_id = None
-            if hmac.compare_digest(actual, expected):
+            public = self._public_request()
+            if not public and not device_only and hmac.compare_digest(actual, expected):
                 return True
             if not admin and lifecycle and actual.startswith("Bearer "):
                 self.device_id = lifecycle.authenticate(actual[7:])
