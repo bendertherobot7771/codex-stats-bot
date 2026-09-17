@@ -105,8 +105,17 @@ class TelegramBot:
             response, markup = telegram_last(self.database), None
         elif command == "/users" and user["role"] == "admin":
             response, markup = self._users_message()
-        elif command == "/addpc" and user["role"] == "admin" and self.lifecycle:
-            response, markup = self.lifecycle.instructions(chat_id), None
+        elif command == "/install" or (command == "/addpc" and user["role"] == "admin"):
+            markup = None
+            arguments = text.split()[1:]
+            if chat_id < 0 or chat.get("type", "private") != "private":
+                response = "Для получения личного кода установки напишите /install боту в личные сообщения."
+            elif arguments not in ([], ["local"]):
+                response = "Формат: /install — интернет; /install local — домашняя сеть сервера."
+            elif not self.lifecycle:
+                response = "Установка пока не настроена. Обратитесь к администратору."
+            else:
+                response = self.lifecycle.instructions(chat_id, local=arguments == ["local"])
         elif command == "/updates" and self.lifecycle:
             response, markup = self.lifecycle.description(), None
         elif command == "/adduser" and user["role"] == "admin":
@@ -150,7 +159,7 @@ class TelegramBot:
         chat_id = int(parts[1])
         name = parts[2].strip()[:200] if len(parts) > 2 else None
         self.database.ensure_bot_user(chat_id, "viewer", name, admin_id)
-        return f"Участник {chat_id} добавлен. Теперь он может открыть /stats и /weeks."
+        return f"Участник {chat_id} добавлен. Теперь он может открыть /stats и /weeks, подключить свой ПК через /install."
 
     def _remove_user(self, text: str) -> str:
         parts = text.split(maxsplit=1)
@@ -248,6 +257,8 @@ def _help(role: str) -> str:
         "/last — последние задания",
         "/whoami — показать Telegram chat ID",
         "/updates — версии ПК и состояние автообновления",
+        "/install — код и установка Windows-ПК через интернет",
+        "/install local — установка ПК в домашней сети сервера",
     ]
     if role == "admin":
         lines.extend(
@@ -267,6 +278,7 @@ def _telegram_commands() -> list[dict[str, str]]:
         {"command": "weeks", "description": "вся недельная история"},
         {"command": "active", "description": "активные задания"},
         {"command": "last", "description": "последние задания"},
+        {"command": "install", "description": "установить агент: код и команда для Windows"},
         {"command": "users", "description": "управление участниками (админ)"},
         {"command": "addpc", "description": "подключить Windows-ПК (админ)"},
         {"command": "updates", "description": "версии и автообновление"},

@@ -22,7 +22,8 @@ def main() -> int:
 
     database = StatsDatabase(config.database_path)
     lifecycle = Lifecycle(database, os.environ.get("CODEX_STATS_PUBLIC_URL", ""),
-                          Path(os.environ.get("CODEX_STATS_RELEASE_CACHE", "/var/cache/codex-stats/releases")))
+                          Path(os.environ.get("CODEX_STATS_RELEASE_CACHE", "/var/cache/codex-stats/releases")),
+                          local_url=os.environ.get("CODEX_STATS_LOCAL_URL", ""))
     bot = None
     if config.telegram_bot_token:
         bot = TelegramBot(

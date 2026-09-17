@@ -197,7 +197,7 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(self.life.state()['phase'],'waiting')
         self.assertFalse(self.life.ready()[0])
 
-    def test_only_admin_can_generate_code_and_instructions_have_url(self):
+    def test_addpc_remains_admin_alias_and_instructions_have_url(self):
         bot = TelegramBot('test',{1},set(),self.db,self.life)
         self.db.ensure_bot_user(2,'viewer')
         bot._handle_update({'message':{'chat':{'id':2},'text':'/addpc'}})
@@ -208,6 +208,49 @@ class LifecycleTests(unittest.TestCase):
         self.assertIn('/agent/bootstrap.ps1',text)
         self.assertIn(' -Code ',text)
         self.assertIn('15 минут',text)
+
+
+    def test_install_for_existing_admin_and_viewers(self):
+        bot = TelegramBot('test', {1}, {2, 3}, self.db, self.life)
+        codes = set()
+        for chat_id in (1, 2, 3):
+            bot._handle_update({'message': {'chat': {'id': chat_id, 'type': 'private'}, 'text': '/install'}})
+            text = bot.outgoing.get_nowait()[1]['text']
+            command = next(line for line in text.splitlines() if line.startswith('$p ='))
+            self.assertIn("-ServerUrl 'http://192.168.1.2:8765'", command)
+            self.assertIn('-ErrorAction Stop;', command)
+            self.assertIn('/v0.4.4/agent/bootstrap.ps1', command)
+            code = command.split(" -Code '")[1].split("'")[0]
+            self.assertNotIn(code, codes)
+            codes.add(code)
+            result = self.life.enroll({'code': code, 'machine_id': str(chat_id), 'machine_name': 'PC'})
+            self.assertEqual(self.life.authenticate(result['api_key']), str(chat_id))
+        self.assertEqual(self.db.bot_user(2)['role'], 'viewer')
+        bot._handle_update({'message': {'chat': {'id': 2}, 'text': '/adduser 4'}})
+        self.assertIsNone(self.db.bot_user(4))
+
+    def test_install_denies_unknown_disabled_and_group_without_codes(self):
+        bot = TelegramBot('test', {1}, {2, -123}, self.db, self.life)
+        self.db.disable_bot_user(2)
+        for chat_id, kind in ((99, 'private'), (2, 'private'), (-123, 'group')):
+            bot._handle_update({'message': {'chat': {'id': chat_id, 'type': kind}, 'text': '/install'}})
+            self.assertNotIn(' -Code ', bot.outgoing.get_nowait()[1]['text'])
+        self.assertEqual(self.db._connection.execute('SELECT count(*) FROM enrollment_codes').fetchone()[0], 0)
+
+    def test_install_local_configuration_and_invalid_arguments(self):
+        bot = TelegramBot('test', {1}, set(), self.db, self.life)
+        for command in ('/install local', '/install typo', '/install local extra'):
+            bot._handle_update({'message': {'chat': {'id': 1}, 'text': command}})
+            self.assertNotIn(' -Code ', bot.outgoing.get_nowait()[1]['text'])
+        self.life.local_url = 'http://192.168.32.125:8765'
+        bot._handle_update({'message': {'chat': {'id': 1}, 'text': '/install@codex_stats_bot local'}})
+        self.assertIn("-ServerUrl 'http://192.168.32.125:8765'", bot.outgoing.get_nowait()[1]['text'])
+
+    def test_install_in_help_and_menu(self):
+        from server.codex_stats_server.telegram_bot import _help, _telegram_commands
+        for role in ('admin', 'viewer'):
+            self.assertIn('/install local', _help(role))
+        self.assertIn('install', [item['command'] for item in _telegram_commands()])
 
 
 class WindowsRollbackTests(unittest.TestCase):

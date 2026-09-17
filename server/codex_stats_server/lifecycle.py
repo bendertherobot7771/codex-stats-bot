@@ -16,8 +16,9 @@ def hashed(value: str) -> str:
 
 
 class Lifecycle:
-    def __init__(self, database, public_url: str, cache: Path, announce=None):
+    def __init__(self, database, public_url: str, cache: Path, announce=None, local_url: str = ""):
         self.db, self.public_url, self.cache = database, public_url.rstrip("/"), cache
+        self.local_url = local_url.rstrip("/")
         self.announce = announce or (lambda text: None)
         self.enrollment_attempts = {}
         with self.db._lock, self.db._connection as connection:
@@ -48,20 +49,30 @@ class Lifecycle:
                                (hashed(code), time.time() + 900, admin))
         return code
 
-    def instructions(self, admin: int) -> str:
-        if not self.public_url:
-            return "Адрес сервера ещё не настроен (CODEX_STATS_PUBLIC_URL)."
+    def instructions(self, admin: int, local: bool = False) -> str:
+        url = self.local_url if local else self.public_url
+        if not url:
+            setting = "CODEX_STATS_LOCAL_URL" if local else "CODEX_STATS_PUBLIC_URL"
+            return f"Адрес сервера ещё не настроен ({setting}). Обратитесь к администратору."
         code = self.code(admin)
-        script = "https://raw.githubusercontent.com/bendertherobot7771/codex-stats-bot/v0.4.3/agent/bootstrap.ps1"
-        return ("Подключение Windows-ПК\n\nКод (одноразовый, действует 15 минут):\n" + code +
-                "\n\nОткройте PowerShell от обычного пользователя и вставьте команду целиком:\n\n" +
+        script = "https://raw.githubusercontent.com/bendertherobot7771/codex-stats-bot/v0.4.4/agent/bootstrap.ps1"
+        quoted_url = url.replace("'", "''")
+        return ("Подключение Windows-ПК · " + ("домашняя сеть" if local else "интернет") +
+                "\n\n1. На новом ПК с Windows x64 войдите в Codex под нужным аккаунтом.\n"
+                "2. Откройте Windows PowerShell от обычного пользователя (не администратора).\n"
+                "3. Скопируйте следующую строку целиком и нажмите Enter:\n\n" +
                 "$p = Join-Path $env:TEMP ('codex-stats-install-' + [guid]::NewGuid() + '.ps1'); " +
-                "Invoke-WebRequest '" + script + "' -OutFile $p -UseBasicParsing; " +
-                "powershell -NoProfile -ExecutionPolicy Bypass -File $p -ServerUrl '" + self.public_url +
+                "Invoke-WebRequest '" + script + "' -OutFile $p -UseBasicParsing -ErrorAction Stop; " +
+                "powershell -NoProfile -ExecutionPolicy Bypass -File $p -ServerUrl '" + quoted_url +
                 "' -Code '" + code + "'\n\n" +
+                "Код уже включён в команду: " + code + "\nОдноразовый, действует 15 минут. Для каждого ПК запросите новую команду.\n\n" +
                 "Установщик сам добавит отдельный Python и агент для текущего пользователя, настроит автозапуск и обновления в простое. " +
-                "Нужна локальная авторизация Codex. Git и Python не требуются. " +
-                "Адрес 192.168.x.x доступен только в домашней сети; для другого места нужен настроенный HTTPS-адрес сервера. " +
+                "Git и Python заранее не требуются. Нужен доступ к GitHub, python.org и серверу. " +
+                "ExecutionPolicy Bypass действует только для процесса установки; постоянные настройки защиты не меняются.\n\n" +
+                "Дождитесь успешного завершения установки, затем начните новое задание Codex. Проверьте ПК через /updates, расход — через /stats. " +
+                "Уже установленный агент переустанавливать не нужно: он обновляется автоматически.\n\n" +
+                "/install — подключение через интернет; /install local — только домашняя сеть сервера. " +
+                "Если код истёк, запросите команду заново. " +
                 "Не пересылайте код посторонним.")
 
     def enroll(self, data: dict, peer: str = "local") -> dict:
